@@ -133,8 +133,9 @@ class QtRenderContext(RenderContext):
 class PdfRenderContext(RenderContext):
     """ReportLab canvas-backed render context."""
 
-    def __init__(self, pdf: Canvas) -> None:
+    def __init__(self, pdf: Canvas, page_height: float) -> None:
         self._pdf = pdf
+        self._page_height = page_height
 
     def draw_text(
         self,
@@ -149,8 +150,9 @@ class PdfRenderContext(RenderContext):
         rotation: float = 0,
     ) -> None:
         self._pdf.saveState()
-        self._pdf.translate(x, y)
+        self._pdf.translate(x, self._top_to_bottom_y(y, font_size))
         self._pdf.rotate(rotation)
+        self._pdf.setFillColorRGB(0, 0, 0)
         self._pdf.setFont(_pdf_font_name(font_family, bold, italic), font_size)
         self._pdf.drawString(0, 0, text)
         self._pdf.restoreState()
@@ -167,7 +169,7 @@ class PdfRenderContext(RenderContext):
         rotation: float = 0,
     ) -> None:
         self._pdf.saveState()
-        self._pdf.translate(x, y)
+        self._pdf.translate(x, self._top_to_bottom_y(y, display_height))
         self._pdf.rotate(rotation)
         self._pdf.drawImage(
             str(image_path),
@@ -190,10 +192,13 @@ class PdfRenderContext(RenderContext):
         rotation: float = 0,
     ) -> None:
         self._pdf.saveState()
-        self._pdf.translate(x, y)
+        self._pdf.translate(x, self._top_to_bottom_y(y, height))
         self._pdf.rotate(rotation)
         self._pdf.rect(0, 0, width, height)
         self._pdf.restoreState()
+
+    def _top_to_bottom_y(self, y: float, object_height: float) -> float:
+        return self._page_height - y - object_height
 
 
 class Renderer:

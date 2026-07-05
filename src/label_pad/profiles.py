@@ -10,21 +10,32 @@ import yaml
 
 DEFAULT_PROFILES_YAML = """
 profiles:
-  - name: 4 x 6 Shipping Label
+  - name: Rollo 2 x 1
+    page_width_mm: 50.8
+    page_height_mm: 25.4
+    label_width_mm: 50.8
+    label_height_mm: 25.4
+    columns: 1
+    rows: 1
+    cups_page_size: 2x1
+  - name: Rollo 2.25 x 1.25
+    page_width_mm: 57.15
+    page_height_mm: 31.75
+    label_width_mm: 57.15
+    label_height_mm: 31.75
+    columns: 1
+    rows: 1
+  - name: Rollo 4 x 6
     page_width_mm: 101.6
     page_height_mm: 152.4
     label_width_mm: 101.6
     label_height_mm: 152.4
     columns: 1
     rows: 1
-  - name: Letter Half Sheet
-    page_width_mm: 215.9
-    page_height_mm: 279.4
-    label_width_mm: 215.9
-    label_height_mm: 139.7
-    columns: 1
-    rows: 2
+    cups_page_size: 4x6
 """
+
+DEFAULT_PROFILE_NAME = "Rollo 2 x 1"
 
 
 @dataclass(frozen=True)
@@ -38,6 +49,7 @@ class LabelProfile:
     label_height_mm: float
     columns: int
     rows: int
+    cups_page_size: str | None = None
 
     @property
     def labels_per_page(self) -> int:
@@ -59,6 +71,14 @@ def load_profiles(path: str | Path | None = None) -> list[LabelProfile]:
     return profiles
 
 
+def default_profile_index(profiles: list[LabelProfile]) -> int:
+    """Return the preferred default profile index."""
+    for index, profile in enumerate(profiles):
+        if profile.name == DEFAULT_PROFILE_NAME:
+            return index
+    return 0
+
+
 def _profile_from_mapping(data: Any) -> LabelProfile:
     if not isinstance(data, dict):
         raise ValueError("profile entries must be mappings")
@@ -70,4 +90,5 @@ def _profile_from_mapping(data: Any) -> LabelProfile:
         label_height_mm=float(data["label_height_mm"]),
         columns=int(data["columns"]),
         rows=int(data["rows"]),
+        cups_page_size=data.get("cups_page_size"),
     )

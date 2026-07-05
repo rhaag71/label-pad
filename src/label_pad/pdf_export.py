@@ -9,7 +9,7 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
 from label_pad.model import LabelDocument
-from label_pad.profiles import LabelProfile, load_profiles
+from label_pad.profiles import LabelProfile
 from label_pad.renderer import PdfRenderContext, Renderer
 
 POINTS_PER_MM = 72 / 25.4
@@ -25,11 +25,14 @@ def page_size_points(profile: LabelProfile) -> tuple[float, float]:
     return (mm_to_points(profile.page_width_mm), mm_to_points(profile.page_height_mm))
 
 
-def export_pdf(path: str | Path, profile: LabelProfile | None = None) -> Path:
-    """Create a blank label PDF for the selected profile and return its path."""
-    selected_profile = profile or load_profiles()[0]
+def export_pdf(
+    path: str | Path,
+    profile: LabelProfile,
+    document: LabelDocument,
+) -> Path:
+    """Create a label PDF for the selected profile and document."""
     output_path = Path(path)
-    width, height = page_size_points(selected_profile)
+    width, height = page_size_points(profile)
 
     pdf = canvas.Canvas(str(output_path), pagesize=(width, height))
     pdf.setFillColorRGB(1, 1, 1)
@@ -37,10 +40,7 @@ def export_pdf(path: str | Path, profile: LabelProfile | None = None) -> Path:
 
     image = Image.new("RGB", (1, 1), "white")
     pdf.drawImage(ImageReader(image), 0, 0, width=width, height=height)
-    Renderer().render(
-        LabelDocument(profile_name=selected_profile.name),
-        PdfRenderContext(pdf),
-    )
+    Renderer().render(document, PdfRenderContext(pdf, page_height=height))
     pdf.showPage()
     pdf.save()
     return output_path
