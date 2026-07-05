@@ -31,6 +31,8 @@ def test_text_object_defaults_and_fields() -> None:
     assert text_object.geometry.id
     assert text_object.geometry.x == 10
     assert text_object.geometry.y == 20
+    assert text_object.geometry.width == 0
+    assert text_object.geometry.height == 0
     assert text_object.geometry.rotation == 0
     assert text_object.geometry.selected is False
     assert text_object.text == "Ship to"
@@ -48,6 +50,8 @@ def test_create_text_adds_default_text_object_and_returns_it() -> None:
     assert document.objects == [text_object]
     assert text_object.geometry.x == 10
     assert text_object.geometry.y == 20
+    assert text_object.geometry.width == 0
+    assert text_object.geometry.height == 0
     assert text_object.geometry.selected is True
     assert text_object.text == "Text"
     assert text_object.font_family == "Helvetica"
@@ -62,6 +66,15 @@ def test_create_text_accepts_text_value() -> None:
     text_object = document.create_text(10, 20, text="Ship to")
 
     assert text_object.text == "Ship to"
+
+
+def test_create_text_accepts_box_size() -> None:
+    document = LabelDocument(profile_name="4 x 6 Shipping Label")
+
+    text_object = document.create_text(10, 20, width=40, height=16)
+
+    assert text_object.geometry.width == 40
+    assert text_object.geometry.height == 16
 
 
 def test_create_text_uses_document_defaults() -> None:
@@ -100,7 +113,14 @@ def test_create_text_deselects_existing_objects_and_selects_new_text() -> None:
 
 def test_image_object_defaults_and_fields() -> None:
     image_object = ImageObject(
-        geometry=ObjectGeometry(x=5, y=6, rotation=90, selected=True),
+        geometry=ObjectGeometry(
+            x=5,
+            y=6,
+            width=40,
+            height=30,
+            rotation=90,
+            selected=True,
+        ),
         image_path=Path("logo.png"),
         display_width=40,
         display_height=30,
@@ -110,6 +130,8 @@ def test_image_object_defaults_and_fields() -> None:
     assert image_object.geometry.id
     assert image_object.geometry.x == 5
     assert image_object.geometry.y == 6
+    assert image_object.geometry.width == 40
+    assert image_object.geometry.height == 30
     assert image_object.geometry.rotation == 90
     assert image_object.geometry.selected is True
     assert image_object.image_path == Path("logo.png")

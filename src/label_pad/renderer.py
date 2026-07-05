@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QFont, QPainter, QPixmap
+from PySide6.QtGui import QFont, QFontMetricsF, QPainter, QPixmap
 from reportlab.pdfgen.canvas import Canvas
 
 from label_pad.model import ImageObject, LabelDocument, TextObject
@@ -78,11 +78,12 @@ class QtRenderContext(RenderContext):
         self._painter.save()
         self._painter.translate(x, y)
         self._painter.rotate(rotation)
-        font = QFont(font_family, int(font_size))
+        font = QFont(font_family)
+        font.setPointSizeF(font_size)
         font.setBold(bold)
         font.setItalic(italic)
         self._painter.setFont(font)
-        self._painter.drawText(0, 0, text)
+        self._painter.drawText(0, QFontMetricsF(font).ascent(), text)
         self._painter.restore()
 
     def draw_image(

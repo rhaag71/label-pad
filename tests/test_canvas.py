@@ -1,17 +1,34 @@
+import os
+from dataclasses import replace
+
+import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication
 
 from label_pad.canvas import (
     LabelCanvas,
+    canvas_text_layout,
     editor_font_for_text_object,
     hit_test_text_object,
-    inline_editor_geometry,
     label_coordinates_from_widget,
+    measured_text_box_size,
     preview_rect,
     text_object_bounds,
     update_text_object,
 )
 from label_pad.model import LabelDocument, ObjectGeometry, TextObject
 from label_pad.profiles import LabelProfile
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def qapplication():
+    return QApplication.instance() or QApplication([])
+
+
+def replace_text_object(text_object: TextObject, text: str) -> TextObject:
+    return replace(text_object, text=text)
 
 
 def test_preview_rect_preserves_profile_aspect_ratio_when_width_limited() -> None:
@@ -96,14 +113,19 @@ def test_label_coordinates_from_widget_returns_none_outside_label() -> None:
     assert coordinates is None
 
 
-def test_text_object_bounds_estimates_baseline_position() -> None:
+def test_text_object_bounds_use_object_geometry_box() -> None:
     text_object = TextObject(
-        geometry=ObjectGeometry(x=10, y=30),
+        geometry=ObjectGeometry(x=10, y=30, width=80, height=24),
         text="Text",
         font_size=12,
     )
 
-    assert text_object_bounds(text_object) == (10, 18, 28.799999999999997, 12)
+    left, top, width, height = text_object_bounds(text_object)
+
+    assert left == 10
+    assert top == 30
+    assert width == 80
+    assert height == 24
 
 
 def test_text_object_bounds_are_reasonably_tight_to_visible_text() -> None:
@@ -115,11 +137,27 @@ def test_text_object_bounds_are_reasonably_tight_to_visible_text() -> None:
 
     _, _, width, height = text_object_bounds(text_object)
 
-    assert width <= len(text_object.text) * text_object.font_size * 0.7
-    assert height == text_object.font_size
+    assert width < len(text_object.text) * text_object.font_size
+    assert height > text_object.font_size
 
 
-def test_inline_editor_geometry_expands_right_from_text_anchor() -> None:
+def test_text_object_bounds_come_from_shared_canvas_text_layout() -> None:
+    text_object = TextObject(
+        geometry=ObjectGeometry(x=10, y=30),
+        text="Text",
+        font_size=14,
+    )
+    layout_rect = canvas_text_layout(text_object).box_rect
+
+    assert text_object_bounds(text_object) == (
+        layout_rect.x(),
+        layout_rect.y(),
+        layout_rect.width(),
+        layout_rect.height(),
+    )
+
+
+def test_canvas_text_layout_editor_rect_expands_right_from_text_anchor() -> None:
     label_rect = preview_rect(
         width=248,
         height=400,
@@ -139,22 +177,16 @@ def test_inline_editor_geometry_expands_right_from_text_anchor() -> None:
         font_size=12,
     )
 
-    short_rect = inline_editor_geometry(
-        label_rect=label_rect,
-        text_object=text_object,
-        content_width=24,
-    )
-    long_rect = inline_editor_geometry(
-        label_rect=label_rect,
-        text_object=text_object,
-        content_width=120,
-    )
+    short_rect = canvas_text_layout(text_object).editor_rect(label_rect)
+    long_rect = canvas_text_layout(
+        replace_text_object(text_object, "A much longer text value")
+    ).editor_rect(label_rect)
 
     assert long_rect.x() == short_rect.x()
     assert long_rect.width() > short_rect.width()
 
 
-def test_inline_editor_geometry_clamps_width_inside_label() -> None:
+def test_canvas_text_layout_editor_rect_clamps_width_inside_label() -> None:
     label_rect = preview_rect(
         width=248,
         height=400,
@@ -174,17 +206,15 @@ def test_inline_editor_geometry_clamps_width_inside_label() -> None:
         font_size=12,
     )
 
-    editor_rect = inline_editor_geometry(
-        label_rect=label_rect,
-        text_object=text_object,
-        content_width=120,
-    )
+    editor_rect = canvas_text_layout(
+        replace_text_object(text_object, "A much longer text value")
+    ).editor_rect(label_rect)
 
     assert editor_rect.x() == label_rect.x() + 190
     assert editor_rect.x() + editor_rect.width() == label_rect.x() + label_rect.width()
 
 
-def test_inline_editor_geometry_keeps_left_edge_fixed_for_long_text() -> None:
+def test_canvas_text_layout_editor_rect_keeps_left_edge_fixed_for_long_text() -> None:
     label_rect = preview_rect(
         width=248,
         height=400,
@@ -204,11 +234,9 @@ def test_inline_editor_geometry_keeps_left_edge_fixed_for_long_text() -> None:
         font_size=12,
     )
 
-    editor_rect = inline_editor_geometry(
-        label_rect=label_rect,
-        text_object=text_object,
-        content_width=1000,
-    )
+    editor_rect = canvas_text_layout(
+        replace_text_object(text_object, "A" * 200)
+    ).editor_rect(label_rect)
 
     assert editor_rect.x() == label_rect.x() + 50
     assert editor_rect.x() + editor_rect.width() == label_rect.x() + label_rect.width()
@@ -235,14 +263,14 @@ def test_hit_test_text_object_returns_topmost_matching_text() -> None:
     document = LabelDocument(profile_name="Wide")
     first = document.add_object(
         TextObject(
-            geometry=ObjectGeometry(id="first", x=10, y=30),
+            geometry=ObjectGeometry(id="first", x=10, y=20, width=20, height=20),
             text="First",
             font_size=12,
         )
     )
     second = document.add_object(
         TextObject(
-            geometry=ObjectGeometry(id="second", x=12, y=30),
+            geometry=ObjectGeometry(id="second", x=12, y=20, width=20, height=20),
             text="Second",
             font_size=12,
         )
@@ -268,6 +296,28 @@ def test_update_text_object_replaces_text_content() -> None:
     assert updated_object is not text_object
     assert updated_object.text == "New"
     assert updated_object.geometry == text_object.geometry
+
+
+def test_update_text_object_can_update_box_size() -> None:
+    document = LabelDocument(profile_name="Wide")
+    document.add_object(
+        TextObject(
+            geometry=ObjectGeometry(id="text", x=10, y=30, width=20, height=10),
+            text="Old",
+        )
+    )
+
+    updated_object = update_text_object(
+        document,
+        "text",
+        "New",
+        width=50,
+        height=18,
+    )
+
+    assert updated_object is not None
+    assert updated_object.geometry.width == 50
+    assert updated_object.geometry.height == 18
 
 
 def test_single_click_empty_label_clears_selection_without_creating_text() -> None:
@@ -319,7 +369,7 @@ def test_single_click_existing_text_selects_without_creating_object() -> None:
         )
     )
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
-    event = FakeMouseEvent(x=75, y=175)
+    event = FakeMouseEvent(x=75, y=185)
 
     LabelCanvas.mousePressEvent(canvas, event)
 
@@ -384,7 +434,7 @@ def test_double_click_existing_text_starts_editing_without_creating_object() -> 
         )
     )
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
-    event = FakeMouseEvent(x=75, y=175)
+    event = FakeMouseEvent(x=75, y=185)
 
     LabelCanvas.mouseDoubleClickEvent(canvas, event)
 
@@ -415,7 +465,7 @@ def test_double_click_selected_text_starts_editing() -> None:
         )
     )
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
-    event = FakeMouseEvent(x=75, y=175)
+    event = FakeMouseEvent(x=75, y=185)
 
     LabelCanvas.mouseDoubleClickEvent(canvas, event)
 
@@ -450,6 +500,10 @@ def test_double_click_empty_label_creates_text_and_starts_editing() -> None:
     assert text_object.text == "Text"
     assert text_object.geometry.x == 50
     assert text_object.geometry.y == 30
+    assert (
+        text_object.geometry.width,
+        text_object.geometry.height,
+    ) == measured_text_box_size(text_object)
     assert text_object.geometry.selected is True
     assert canvas.edit_started_with == text_object
     assert canvas.edit_started_created is True
@@ -536,6 +590,10 @@ def test_finish_text_edit_commits_editor_text() -> None:
     LabelCanvas._finish_text_edit(canvas, commit=True)
 
     assert document.objects[0].text == "New"
+    assert (
+        document.objects[0].geometry.width,
+        document.objects[0].geometry.height,
+    ) == measured_text_box_size(document.objects[0])
     assert canvas._text_editor is None
     assert canvas._editing_object_id is None
     assert canvas.update_count == 1

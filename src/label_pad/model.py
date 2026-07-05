@@ -10,11 +10,13 @@ from uuid import uuid4
 
 @dataclass(frozen=True)
 class ObjectGeometry:
-    """Shared object position and selection state."""
+    """Shared rectangular object box geometry and selection state."""
 
     id: str = field(default_factory=lambda: uuid4().hex)
     x: float = 0
     y: float = 0
+    width: float = 0
+    height: float = 0
     rotation: float = 0
     selected: bool = False
 
@@ -70,14 +72,27 @@ class LabelDocument:
         self.objects.append(label_object)
         return label_object
 
-    def create_text(self, x: float, y: float, text: str = "Text") -> TextObject:
+    def create_text(
+        self,
+        x: float,
+        y: float,
+        text: str = "Text",
+        width: float = 0,
+        height: float = 0,
+    ) -> TextObject:
         """Create a default text object at a label coordinate."""
         self.objects = [
             _with_selected(label_object, False) for label_object in self.objects
         ]
         return self.add_object(
             TextObject(
-                geometry=ObjectGeometry(x=x, y=y, selected=True),
+                geometry=ObjectGeometry(
+                    x=x,
+                    y=y,
+                    width=width,
+                    height=height,
+                    selected=True,
+                ),
                 text=text,
                 font_family=self.defaults.font_family,
                 font_size=self.defaults.font_size,
