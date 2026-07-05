@@ -14,7 +14,12 @@ from label_pad.profiles import LabelProfile
 from label_pad.renderer import QtRenderContext, Renderer
 
 TEXT_BOX_HORIZONTAL_PADDING = 3
-TEXT_BOX_VERTICAL_PADDING = 2
+TEXT_BOX_VERTICAL_PADDING = 1
+TEXT_BOX_HIT_SLOP = 4
+RESIZE_HANDLE_SIZE = 6
+RESIZE_HANDLE_HIT_SLOP = 3
+MIN_TEXT_BOX_WIDTH = 12
+MIN_TEXT_BOX_HEIGHT = 10
 MIN_EDITOR_WIDTH = 48
 EDITOR_STYLE = """
 QLineEdit {
@@ -73,6 +78,28 @@ def label_coordinates_from_widget(
     return (widget_x - label_rect.x(), widget_y - label_rect.y())
 
 
+def clamped_label_coordinates_from_widget(
+    *,
+    widget_x: float,
+    widget_y: float,
+    width: int,
+    height: int,
+    profile: LabelProfile,
+    margin: int = 24,
+) -> tuple[float, float]:
+    """Return label-local coordinates clamped to the visible preview."""
+    label_rect = preview_rect(
+        width=width,
+        height=height,
+        profile=profile,
+        margin=margin,
+    )
+    return (
+        min(max(widget_x - label_rect.x(), 0), label_rect.width()),
+        min(max(widget_y - label_rect.y(), 0), label_rect.height()),
+    )
+
+
 @dataclass(frozen=True)
 class CanvasTextLayout:
     """Canvas-side text box metrics shared by hit testing, selection, and editing."""
@@ -110,6 +137,32 @@ def editor_font_for_text_object(text_object: TextObject) -> QFont:
     font.setBold(text_object.bold)
     font.setItalic(text_object.italic)
     return font
+
+
+@dataclass(frozen=True)
+class DragState:
+    """Transient canvas drag state for moving a selected object box."""
+
+    object_id: str
+    start_pointer_x: float
+    start_pointer_y: float
+    start_object_x: float
+    start_object_y: float
+    object_width: float
+    object_height: float
+
+
+@dataclass(frozen=True)
+class ResizeState:
+    """Transient canvas resize state for the bottom-right object handle."""
+
+    object_id: str
+    start_pointer_x: float
+    start_pointer_y: float
+    start_width: float
+    start_height: float
+    object_x: float
+    object_y: float
 
 
 def measured_text_box_size(text_object: TextObject) -> tuple[float, float]:
@@ -151,6 +204,52 @@ def text_object_bounds(text_object: TextObject) -> tuple[float, float, float, fl
     return (rect.x(), rect.y(), rect.width(), rect.height())
 
 
+def text_object_hit_rect(text_object: TextObject) -> QRectF:
+    """Return the forgiving interaction bounds without changing visible geometry."""
+    return canvas_text_layout(text_object).box_rect.adjusted(
+        -TEXT_BOX_HIT_SLOP,
+        -TEXT_BOX_HIT_SLOP,
+        TEXT_BOX_HIT_SLOP,
+        TEXT_BOX_HIT_SLOP,
+    )
+
+
+def text_object_resize_handle_rect(text_object: TextObject) -> QRectF:
+    """Return the visible bottom-right resize handle for a text object."""
+    box_rect = canvas_text_layout(text_object).box_rect
+    return QRectF(
+        box_rect.right() - RESIZE_HANDLE_SIZE,
+        box_rect.bottom() - RESIZE_HANDLE_SIZE,
+        RESIZE_HANDLE_SIZE,
+        RESIZE_HANDLE_SIZE,
+    )
+
+
+def text_object_resize_handle_hit_rect(text_object: TextObject) -> QRectF:
+    """Return the forgiving hit bounds for the visible resize handle."""
+    return text_object_resize_handle_rect(text_object).adjusted(
+        -RESIZE_HANDLE_HIT_SLOP,
+        -RESIZE_HANDLE_HIT_SLOP,
+        RESIZE_HANDLE_HIT_SLOP,
+        RESIZE_HANDLE_HIT_SLOP,
+    )
+
+
+def hit_test_text_resize_handle(
+    document: LabelDocument,
+    *,
+    x: float,
+    y: float,
+) -> TextObject | None:
+    """Return the topmost selected text object whose resize handle contains a point."""
+    for label_object in reversed(document.selected_objects()):
+        if not isinstance(label_object, TextObject):
+            continue
+        if text_object_resize_handle_hit_rect(label_object).contains(x, y):
+            return label_object
+    return None
+
+
 def hit_test_text_object(
     document: LabelDocument,
     *,
@@ -161,8 +260,7 @@ def hit_test_text_object(
     for label_object in reversed(document.objects):
         if not isinstance(label_object, TextObject):
             continue
-        box_rect = canvas_text_layout(label_object).box_rect
-        if box_rect.contains(x, y):
+        if text_object_hit_rect(label_object).contains(x, y):
             return label_object
     return None
 
@@ -197,6 +295,46 @@ def update_text_object(
     return None
 
 
+def move_document_object(
+    document: LabelDocument,
+    object_id: str,
+    *,
+    x: float,
+    y: float,
+) -> DocumentObject | None:
+    """Move a document object by updating shared geometry position."""
+    for index, label_object in enumerate(document.objects):
+        if label_object.geometry.id != object_id:
+            continue
+        updated_object = replace(
+            label_object,
+            geometry=replace(label_object.geometry, x=x, y=y),
+        )
+        document.objects[index] = updated_object
+        return updated_object
+    return None
+
+
+def resize_document_object(
+    document: LabelDocument,
+    object_id: str,
+    *,
+    width: float,
+    height: float,
+) -> DocumentObject | None:
+    """Resize a document object by updating shared geometry size."""
+    for index, label_object in enumerate(document.objects):
+        if label_object.geometry.id != object_id:
+            continue
+        updated_object = replace(
+            label_object,
+            geometry=replace(label_object.geometry, width=width, height=height),
+        )
+        document.objects[index] = updated_object
+        return updated_object
+    return None
+
+
 class LabelCanvas(QWidget):
     """White preview surface with box selection and inline text editing.
 
@@ -218,8 +356,11 @@ class LabelCanvas(QWidget):
         self._text_editor = None
         self._editing_object_id = None
         self._editing_created_object_id = None
+        self._drag_state = None
+        self._resize_state = None
         self.setMinimumSize(320, 220)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setMouseTracking(True)
 
     def set_profile(self, profile: LabelProfile, document: LabelDocument) -> None:
         self._profile = profile
@@ -231,6 +372,8 @@ class LabelCanvas(QWidget):
         self.update()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
+        self._drag_state = None
+        self._resize_state = None
         if self._text_editor is not None:
             self._finish_text_edit(commit=True)
         self.setFocus()
@@ -248,15 +391,95 @@ class LabelCanvas(QWidget):
             return
 
         x, y = coordinates
+        resized_object = hit_test_text_resize_handle(self._document, x=x, y=y)
+        if resized_object is not None:
+            select_document_object(self._document, resized_object.geometry.id)
+            self._resize_state = _resize_state_for_text_object(
+                text_object=resized_object,
+                pointer_x=x,
+                pointer_y=y,
+            )
+            self.update()
+            event.accept()
+            return
+
         selected_object = hit_test_text_object(self._document, x=x, y=y)
         if selected_object is None:
             select_document_object(self._document, None)
         else:
             select_document_object(self._document, selected_object.geometry.id)
+            self._drag_state = _drag_state_for_text_object(
+                text_object=selected_object,
+                pointer_x=x,
+                pointer_y=y,
+            )
         self.update()
         event.accept()
 
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._text_editor is not None:
+            event.ignore()
+            return
+        if self._drag_state is None and self._resize_state is None:
+            self._update_hover_cursor(event)
+            event.ignore()
+            return
+
+        pointer_x, pointer_y = clamped_label_coordinates_from_widget(
+            widget_x=event.position().x(),
+            widget_y=event.position().y(),
+            width=self.width(),
+            height=self.height(),
+            profile=self._profile,
+        )
+        label_rect = preview_rect(
+            width=self.width(),
+            height=self.height(),
+            profile=self._profile,
+        )
+        if self._resize_state is not None:
+            width, height = _resized_object_size(
+                resize_state=self._resize_state,
+                pointer_x=pointer_x,
+                pointer_y=pointer_y,
+                label_width=label_rect.width(),
+                label_height=label_rect.height(),
+            )
+            resize_document_object(
+                self._document,
+                self._resize_state.object_id,
+                width=width,
+                height=height,
+            )
+            self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+            self.update()
+            event.accept()
+            return
+
+        x, y = _dragged_object_position(
+            drag_state=self._drag_state,
+            pointer_x=pointer_x,
+            pointer_y=pointer_y,
+            label_width=label_rect.width(),
+            label_height=label_rect.height(),
+        )
+        move_document_object(self._document, self._drag_state.object_id, x=x, y=y)
+        self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        self.update()
+        event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if self._drag_state is None and self._resize_state is None:
+            event.ignore()
+            return
+        self._drag_state = None
+        self._resize_state = None
+        self._update_hover_cursor(event)
+        event.accept()
+
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        self._drag_state = None
+        self._resize_state = None
         if self._text_editor is not None:
             self._finish_text_edit(commit=True)
             event.accept()
@@ -308,6 +531,30 @@ class LabelCanvas(QWidget):
             self._document.remove_object(label_object.geometry.id)
         self.update()
         event.accept()
+
+    def _update_hover_cursor(self, event) -> None:
+        coordinates = label_coordinates_from_widget(
+            widget_x=event.position().x(),
+            widget_y=event.position().y(),
+            width=self.width(),
+            height=self.height(),
+            profile=self._profile,
+        )
+        if coordinates is None:
+            self.unsetCursor()
+            return
+
+        x, y = coordinates
+        resized_object = hit_test_text_resize_handle(self._document, x=x, y=y)
+        if resized_object is not None:
+            self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+            return
+
+        hovered_object = hit_test_text_object(self._document, x=x, y=y)
+        if hovered_object is not None and hovered_object.geometry.selected:
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+        else:
+            self.unsetCursor()
 
     def _start_text_edit(self, text_object: TextObject, *, created: bool) -> None:
         """Start exclusive inline text editing for a TextObject."""
@@ -384,6 +631,8 @@ class LabelCanvas(QWidget):
                 width, height = measured_text_box_size(
                     replace(label_object, text=editor.text())
                 )
+                if label_object.geometry.height > 0:
+                    height = label_object.geometry.height
                 update_text_object(
                     self._document,
                     object_id,
@@ -420,6 +669,11 @@ class LabelCanvas(QWidget):
             if not isinstance(label_object, TextObject):
                 continue
             painter.drawRect(canvas_text_layout(label_object).box_rect)
+            painter.fillRect(
+                text_object_resize_handle_rect(label_object),
+                Qt.GlobalColor.white,
+            )
+            painter.drawRect(text_object_resize_handle_rect(label_object))
         painter.restore()
 
 
@@ -445,8 +699,80 @@ def _new_text_box_size(document: LabelDocument) -> tuple[float, float]:
     return measured_text_box_size(text_object)
 
 
+def _drag_state_for_text_object(
+    *,
+    text_object: TextObject,
+    pointer_x: float,
+    pointer_y: float,
+) -> DragState:
+    layout = canvas_text_layout(text_object)
+    return DragState(
+        object_id=text_object.geometry.id,
+        start_pointer_x=pointer_x,
+        start_pointer_y=pointer_y,
+        start_object_x=text_object.geometry.x,
+        start_object_y=text_object.geometry.y,
+        object_width=layout.box_rect.width(),
+        object_height=layout.box_rect.height(),
+    )
+
+
+def _resize_state_for_text_object(
+    *,
+    text_object: TextObject,
+    pointer_x: float,
+    pointer_y: float,
+) -> ResizeState:
+    layout = canvas_text_layout(text_object)
+    return ResizeState(
+        object_id=text_object.geometry.id,
+        start_pointer_x=pointer_x,
+        start_pointer_y=pointer_y,
+        start_width=layout.box_rect.width(),
+        start_height=layout.box_rect.height(),
+        object_x=text_object.geometry.x,
+        object_y=text_object.geometry.y,
+    )
+
+
+def _dragged_object_position(
+    *,
+    drag_state: DragState,
+    pointer_x: float,
+    pointer_y: float,
+    label_width: float,
+    label_height: float,
+) -> tuple[float, float]:
+    x = drag_state.start_object_x + pointer_x - drag_state.start_pointer_x
+    y = drag_state.start_object_y + pointer_y - drag_state.start_pointer_y
+    return (
+        min(max(x, 0), max(0, label_width - drag_state.object_width)),
+        min(max(y, 0), max(0, label_height - drag_state.object_height)),
+    )
+
+
+def _resized_object_size(
+    *,
+    resize_state: ResizeState,
+    pointer_x: float,
+    pointer_y: float,
+    label_width: float,
+    label_height: float,
+) -> tuple[float, float]:
+    width = resize_state.start_width + pointer_x - resize_state.start_pointer_x
+    height = resize_state.start_height + pointer_y - resize_state.start_pointer_y
+    max_width = max(MIN_TEXT_BOX_WIDTH, label_width - resize_state.object_x)
+    max_height = max(MIN_TEXT_BOX_HEIGHT, label_height - resize_state.object_y)
+    return (
+        min(max(width, MIN_TEXT_BOX_WIDTH), max_width),
+        min(max(height, MIN_TEXT_BOX_HEIGHT), max_height),
+    )
+
+
 def _with_measured_text_box(text_object: TextObject) -> TextObject:
     width, height = measured_text_box_size(text_object)
+    if text_object.geometry.height > 0:
+        height = text_object.geometry.height
     return replace(
         text_object,
         geometry=replace(text_object.geometry, width=width, height=height),
