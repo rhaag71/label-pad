@@ -28,7 +28,7 @@ class TextObject:
     geometry: ObjectGeometry = field(default_factory=ObjectGeometry)
     text: str = ""
     font_family: str = "Arial"
-    font_size: float = 12
+    font_size: float = 14
     bold: bool = False
     italic: bool = False
     wrap: bool = True

@@ -2,7 +2,6 @@ from pathlib import Path
 
 from label_pad.model import ImageObject, LabelDocument, ObjectGeometry, TextObject
 from label_pad.renderer import (
-    PDF_TEXT_SCALE,
     TEXT_BOX_HORIZONTAL_PADDING,
     TEXT_BOX_VERTICAL_PADDING,
     PdfRenderContext,
@@ -160,12 +159,12 @@ def test_pdf_render_context_converts_text_top_left_y_to_pdf_baseline() -> None:
     translated_call = (
         "translate",
         8 + TEXT_BOX_HORIZONTAL_PADDING,
-        72 - 18 - TEXT_BOX_VERTICAL_PADDING - (12 * PDF_TEXT_SCALE),
+        72 - 18 - TEXT_BOX_VERTICAL_PADDING - 12,
     )
     assert translated_call in pdf.calls
     assert 0 <= translated_call[2] <= 72
     assert ("setFillColorRGB", 0, 0, 0) in pdf.calls
-    assert ("setFont", "Helvetica", 12 * PDF_TEXT_SCALE) in pdf.calls
+    assert ("setFont", "Helvetica", 12) in pdf.calls
     assert ("drawString", 0, 0, "Known Good") in pdf.calls
 
 
@@ -181,13 +180,18 @@ def test_pdf_render_context_wraps_text_inside_box() -> None:
         font_size=12,
         bold=False,
         italic=False,
-        width=42,
-        height=30,
+        width=52,
+        height=40,
         wrap=True,
     )
 
     assert ("translate", 8, 54) in pdf.calls
-    assert ("text.setFont", "Helvetica", 12 * PDF_TEXT_SCALE) in pdf.calls
+    assert (
+        "beginText",
+        TEXT_BOX_HORIZONTAL_PADDING,
+        -TEXT_BOX_VERTICAL_PADDING - 12,
+    ) in pdf.calls
+    assert ("text.setFont", "Helvetica", 12) in pdf.calls
     assert ("drawText", ["Known", "Good"]) in pdf.calls
 
 
@@ -263,7 +267,7 @@ def test_renderer_dispatches_text_object_to_pdf_render_context() -> None:
     assert (
         "translate",
         8 + TEXT_BOX_HORIZONTAL_PADDING,
-        72 - 18 - TEXT_BOX_VERTICAL_PADDING - (12 * PDF_TEXT_SCALE),
+        72 - 18 - TEXT_BOX_VERTICAL_PADDING - 14,
     ) in pdf.calls
     assert ("setFillColorRGB", 0, 0, 0) in pdf.calls
     assert ("drawString", 0, 0, "Known Good") in pdf.calls

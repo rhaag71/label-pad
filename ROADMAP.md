@@ -77,6 +77,7 @@ No implementation order is promised beyond the current milestone.
 
 - Geometry should be shared across all object types.
 - Editor state should remain separate from document data.
+- MVP text boxes should default to 14 pt text.
 - Screen zoom must never affect document geometry.
 - Preview, PDF, and printed labels should remain true WYSIWYG relative to one another.
 - Simplicity remains more important than feature count.

@@ -18,7 +18,7 @@ TEXT_BOX_VERTICAL_PADDING = 3
 TEXT_BOX_HIT_SLOP = 4
 RESIZE_HANDLE_SIZE = 6
 RESIZE_HANDLE_HIT_SLOP = 3
-MIN_TEXT_BOX_WIDTH = 12
+MIN_TEXT_BOX_WIDTH = 24
 MIN_TEXT_BOX_HEIGHT = 10
 MIN_EDITOR_WIDTH = 48
 EDITOR_STYLE = """
@@ -137,7 +137,7 @@ class CanvasTextLayout:
 def editor_font_for_text_object(text_object: TextObject) -> QFont:
     """Return the inline editor font matching the rendered text style."""
     font = QFont(text_object.font_family)
-    font.setPixelSize(max(1, round(text_object.font_size)))
+    font.setPointSizeF(text_object.font_size)
     font.setBold(text_object.bold)
     font.setItalic(text_object.italic)
     return font

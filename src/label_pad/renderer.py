@@ -12,7 +12,6 @@ from reportlab.pdfgen.canvas import Canvas
 
 from label_pad.model import ImageObject, LabelDocument, TextObject
 
-PDF_TEXT_SCALE = 72 / 96
 TEXT_BOX_HORIZONTAL_PADDING = 3
 TEXT_BOX_VERTICAL_PADDING = 3
 
@@ -90,7 +89,7 @@ class QtRenderContext(RenderContext):
         self._painter.translate(x, y)
         self._painter.rotate(rotation)
         font = QFont(font_family)
-        font.setPixelSize(max(1, round(font_size)))
+        font.setPointSizeF(font_size)
         font.setBold(bold)
         font.setItalic(italic)
         self._painter.setFont(font)
@@ -187,14 +186,13 @@ class PdfRenderContext(RenderContext):
     ) -> None:
         self._pdf.saveState()
         font_name = _pdf_font_name(font_family, bold, italic)
-        pdf_font_size = font_size * PDF_TEXT_SCALE
         if wrap and width > 0 and height > 0:
             self._draw_wrapped_text(
                 x=x,
                 y=y,
                 text=text,
                 font_name=font_name,
-                font_size=pdf_font_size,
+                font_size=font_size,
                 width=width,
                 height=height,
                 rotation=rotation,
@@ -206,12 +204,12 @@ class PdfRenderContext(RenderContext):
             x + TEXT_BOX_HORIZONTAL_PADDING,
             self._top_to_bottom_y(
                 y + TEXT_BOX_VERTICAL_PADDING,
-                pdf_font_size,
+                font_size,
             ),
         )
         self._pdf.rotate(rotation)
         self._pdf.setFillColorRGB(0, 0, 0)
-        self._pdf.setFont(font_name, pdf_font_size)
+        self._pdf.setFont(font_name, font_size)
         self._pdf.drawString(0, 0, text)
         self._pdf.restoreState()
 

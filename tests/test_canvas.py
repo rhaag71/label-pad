@@ -269,7 +269,7 @@ def test_editor_font_matches_text_object_style() -> None:
     font = editor_font_for_text_object(text_object)
 
     assert font.family() == "Courier New"
-    assert font.pixelSize() == 18
+    assert font.pointSizeF() == 18.5
     assert font.bold() is True
     assert font.italic() is True
 
@@ -753,9 +753,55 @@ def test_resize_handle_drag_enforces_longest_word_minimum_width() -> None:
 
     resized_object = document.find_by_id("text")
     assert isinstance(resized_object, TextObject)
-    assert resized_object.geometry.width == natural_text_box_minimum_width(
-        resized_object
+    assert resized_object.geometry.x == 50
+    assert resized_object.geometry.width == min(
+        150,
+        natural_text_box_minimum_width(resized_object),
     )
+    assert resized_object.geometry.height == min(
+        70,
+        natural_text_box_height(
+            resized_object,
+            resized_object.geometry.width,
+        ),
+    )
+
+
+def test_resize_handle_clamps_long_word_minimum_to_remaining_label_width() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
+    document = LabelDocument(profile_name=profile.name)
+    document.add_object(
+        TextObject(
+            geometry=ObjectGeometry(
+                id="text",
+                x=170,
+                y=30,
+                width=30,
+                height=24,
+                selected=True,
+            ),
+            text="Supercalifragilistic",
+        )
+    )
+    canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
+
+    LabelCanvas.mousePressEvent(canvas, FakeMouseEvent(x=222, y=206))
+    LabelCanvas.mouseMoveEvent(canvas, FakeMouseEvent(x=20, y=120))
+
+    resized_object = document.find_by_id("text")
+    assert isinstance(resized_object, TextObject)
+    assert natural_text_box_minimum_width(resized_object) > 30
+    assert resized_object.geometry.x == 170
+    assert resized_object.geometry.width == 30
+    assert resized_object.geometry.x + resized_object.geometry.width == 200
 
 
 def test_resize_narrower_increases_live_minimum_height_for_wrapped_text() -> None:
@@ -789,7 +835,9 @@ def test_resize_narrower_increases_live_minimum_height_for_wrapped_text() -> Non
 
     resized_object = document.find_by_id("text")
     assert isinstance(resized_object, TextObject)
-    assert resized_object.geometry.width == 40
+    assert resized_object.geometry.width == natural_text_box_minimum_width(
+        resized_object
+    )
     assert resized_object.geometry.height == natural_text_box_height(
         resized_object,
         resized_object.geometry.width,
@@ -1387,9 +1435,12 @@ def test_resized_text_box_wraps_at_user_width_after_edit() -> None:
 
     updated_object = document.objects[0]
     assert updated_object.geometry.width == 50
-    assert updated_object.geometry.height == natural_text_box_height(
-        updated_object,
-        50,
+    assert updated_object.geometry.height == min(
+        70,
+        natural_text_box_height(
+            updated_object,
+            50,
+        ),
     )
 
 
