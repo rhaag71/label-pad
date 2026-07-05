@@ -710,6 +710,82 @@ def test_resize_handle_drag_enforces_minimum_size() -> None:
     )
 
 
+def test_resize_narrower_increases_live_minimum_height_for_wrapped_text() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
+    document = LabelDocument(profile_name=profile.name)
+    document.add_object(
+        TextObject(
+            geometry=ObjectGeometry(
+                id="text",
+                x=50,
+                y=30,
+                width=100,
+                height=20,
+                selected=True,
+            ),
+            text="Alpha Beta",
+        )
+    )
+    canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
+
+    LabelCanvas.mousePressEvent(canvas, FakeMouseEvent(x=172, y=202))
+    LabelCanvas.mouseMoveEvent(canvas, FakeMouseEvent(x=112, y=120))
+
+    resized_object = document.find_by_id("text")
+    assert isinstance(resized_object, TextObject)
+    assert resized_object.geometry.width == 40
+    assert resized_object.geometry.height == natural_text_box_height(
+        resized_object,
+        40,
+    )
+
+
+def test_resize_wider_can_reduce_live_minimum_height_for_wrapped_text() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
+    document = LabelDocument(profile_name=profile.name)
+    document.add_object(
+        TextObject(
+            geometry=ObjectGeometry(
+                id="text",
+                x=50,
+                y=10,
+                width=40,
+                height=80,
+                selected=True,
+            ),
+            text="Alpha Beta Gamma Delta",
+        )
+    )
+    canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
+
+    LabelCanvas.mousePressEvent(canvas, FakeMouseEvent(x=112, y=237))
+    LabelCanvas.mouseMoveEvent(canvas, FakeMouseEvent(x=172, y=152))
+
+    resized_object = document.find_by_id("text")
+    assert isinstance(resized_object, TextObject)
+    assert resized_object.geometry.width == 100
+    assert resized_object.geometry.height == natural_text_box_height(
+        resized_object,
+        100,
+    )
+
+
 def test_hover_over_selected_text_box_uses_move_cursor() -> None:
     profile = LabelProfile(
         name="Wide",
@@ -979,6 +1055,16 @@ def test_inline_editor_escape_cancels() -> None:
     assert event.isAccepted()
 
 
+def test_inline_editor_scrollbars_are_disabled() -> None:
+    editor = _InlineTextEditor(lambda: None, None)
+
+    assert (
+        editor.horizontalScrollBarPolicy()
+        == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    )
+    assert editor.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+
+
 def test_finish_text_edit_commits_editor_text() -> None:
     profile = LabelProfile(
         name="Wide",
@@ -1003,10 +1089,13 @@ def test_finish_text_edit_commits_editor_text() -> None:
     LabelCanvas._finish_text_edit(canvas, commit=True)
 
     assert document.objects[0].text == "New"
-    assert (
+    assert document.objects[0].geometry.width == measured_text_box_size(
+        document.objects[0]
+    )[0]
+    assert document.objects[0].geometry.height == natural_text_box_height(
+        document.objects[0],
         document.objects[0].geometry.width,
-        document.objects[0].geometry.height,
-    ) == measured_text_box_size(document.objects[0])
+    )
     assert canvas._text_editor is None
     assert canvas._editing_object_id is None
     assert canvas.update_count == 1
@@ -1038,7 +1127,7 @@ def test_finish_text_edit_preserves_explicit_newlines() -> None:
     assert document.objects[0].text == "Line one\nLine two"
 
 
-def test_finish_text_edit_preserves_existing_box_height() -> None:
+def test_finish_text_edit_preserves_width_and_enforces_minimum_height() -> None:
     profile = LabelProfile(
         name="Wide",
         page_width_mm=100,
@@ -1068,8 +1157,11 @@ def test_finish_text_edit_preserves_existing_box_height() -> None:
 
     LabelCanvas._finish_text_edit(canvas, commit=True)
 
-    assert document.objects[0].geometry.width > 24
-    assert document.objects[0].geometry.height == 18
+    assert document.objects[0].geometry.width == 24
+    assert document.objects[0].geometry.height == natural_text_box_height(
+        document.objects[0],
+        24,
+    )
 
 
 def test_hit_slop_does_not_inflate_object_geometry() -> None:

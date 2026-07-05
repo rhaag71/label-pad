@@ -124,7 +124,11 @@ class CanvasTextLayout:
             max(label_top, label_bottom - 1),
         )
         desired_width = max(MIN_EDITOR_WIDTH, ceil(self.box_rect.width()))
-        desired_height = max(1, ceil(self.box_rect.height()))
+        desired_height = max(
+            1,
+            ceil(self.box_rect.height()),
+            ceil(natural_text_box_height(self.text_object, self.box_rect.width())),
+        )
         width = min(desired_width, max(1, label_right - left))
         height = min(desired_height, max(1, label_bottom - top))
         return QRect(left, top, width, height)
@@ -626,7 +630,9 @@ class LabelCanvas(QWidget):
         )
         editor.setGeometry(
             canvas_text_layout(
-                _with_measured_text_box(replace(label_object, text=editor.text()))
+                _with_minimum_text_box_height(
+                    replace(label_object, text=editor.text())
+                )
             ).editor_rect(label_rect)
         )
 
@@ -646,11 +652,12 @@ class LabelCanvas(QWidget):
         if commit:
             label_object = self._document.find_by_id(object_id)
             if isinstance(label_object, TextObject):
-                width, height = measured_text_box_size(
-                    replace(label_object, text=editor.text())
-                )
-                if label_object.geometry.height > 0:
-                    height = label_object.geometry.height
+                updated_object = replace(label_object, text=editor.text())
+                width = label_object.geometry.width
+                if width <= 0:
+                    width, _ = measured_text_box_size(updated_object)
+                natural_height = natural_text_box_height(updated_object, width)
+                height = max(label_object.geometry.height, natural_height)
                 update_text_object(
                     self._document,
                     object_id,
@@ -801,6 +808,20 @@ def _with_measured_text_box(text_object: TextObject) -> TextObject:
     )
 
 
+def _with_minimum_text_box_height(text_object: TextObject) -> TextObject:
+    width = text_object.geometry.width
+    if width <= 0:
+        width, _ = measured_text_box_size(text_object)
+    height = max(
+        text_object.geometry.height,
+        natural_text_box_height(text_object, width),
+    )
+    return replace(
+        text_object,
+        geometry=replace(text_object.geometry, width=width, height=height),
+    )
+
+
 def _wrapped_canvas_lines(
     *,
     text: str,
@@ -854,6 +875,8 @@ class _InlineTextEditor(QTextEdit):
         self._commit_callback = None
         self._finished = False
         self.setAcceptRichText(False)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
     def set_commit_callback(self, commit_callback) -> None:
         self._commit_callback = commit_callback
