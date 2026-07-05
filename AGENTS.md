@@ -24,11 +24,13 @@ Do not add:
 
 Keep the document model and editor state separate.
 
-The document model is persistent label data: label profile, objects, object geometry, text content, image references, font settings, and other data that would be saved with a label file someday.
+The document model is persistent label data: label profile, objects, object geometry, text content, image references, font settings, and other data that would be saved with a label file someday. Keep it free of Qt imports and UI-only concepts.
 
 Editor state is temporary UI state: selected object, editing object, hover object, dragging object, resize handle, drag origin, and similar interaction-only state. Do not bake transient editor state into saved label content.
 
-All label objects should share rectangular geometry:
+## Shared Object Geometry
+
+All document objects should share rectangular geometry:
 
 - x
 - y
@@ -63,17 +65,15 @@ Future zoom modes should be explicit, such as:
 
 Do not let zoom level change document geometry. Zoom is a view concern only.
 
-## Saving Labels
+## Long-Term Design Principles
 
-Saving labels is now a likely future requirement because useful labels may need to be reused.
+Keep saved label data plain, explicit, and file-based when persistence is eventually added. Avoid turning Label Pad into a database, template library, or document-management system.
 
-Keep this simple and file-based when it is eventually added:
+Prefer predictable direct manipulation over modes. When modes are needed, make the state boundaries clear in code and tests.
 
-- Save Label
-- Open Label
-- Recent Labels
+Preview, PDF export, and printed output should remain true WYSIWYG relative to one another. A fix that only improves one output path should be treated carefully unless the difference is intentional and documented.
 
-Avoid turning this into a database, template library, or document-management system.
+Implementation planning belongs in `ROADMAP.md`; keep this file focused on durable project guidance.
 
 ## Project Notes
 

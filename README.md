@@ -2,6 +2,10 @@
 
 Label layout and printing utility.
 
+## Project Status
+
+See [ROADMAP.md](ROADMAP.md) for current implementation status and planned milestones.
+
 ## Development
 
 Create and activate a virtual environment:
