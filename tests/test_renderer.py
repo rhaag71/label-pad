@@ -22,7 +22,7 @@ def test_renderer_draws_document_objects_in_order() -> None:
     document = LabelDocument(profile_name="4 x 6 Shipping Label")
     document.add_object(
         TextObject(
-            geometry=ObjectGeometry(x=1, y=2, rotation=15),
+            geometry=ObjectGeometry(x=1, y=2, width=80, height=24, rotation=15),
             text="Hello",
             font_family="Helvetica",
             font_size=18,
@@ -54,6 +54,9 @@ def test_renderer_draws_document_objects_in_order() -> None:
                 "font_size": 18,
                 "bold": True,
                 "italic": False,
+                "width": 80,
+                "height": 24,
+                "wrap": True,
                 "rotation": 15,
             },
         ),
@@ -102,6 +105,13 @@ class RecordingPdfCanvas:
     def drawString(self, x, y, text) -> None:  # noqa: N802
         self.calls.append(("drawString", x, y, text))
 
+    def beginText(self, x, y) -> "RecordingPdfText":  # noqa: N802
+        self.calls.append(("beginText", x, y))
+        return RecordingPdfText(self.calls)
+
+    def drawText(self, text_object) -> None:  # noqa: N802
+        self.calls.append(("drawText", text_object.lines))
+
     def drawImage(self, *args, **kwargs) -> None:  # noqa: N802
         self.calls.append(("drawImage", args, kwargs))
 
@@ -110,6 +120,21 @@ class RecordingPdfCanvas:
 
     def restoreState(self) -> None:  # noqa: N802
         self.calls.append(("restoreState",))
+
+
+class RecordingPdfText:
+    def __init__(self, calls) -> None:
+        self.calls = calls
+        self.lines = []
+
+    def setFont(self, font_name, font_size) -> None:  # noqa: N802
+        self.calls.append(("text.setFont", font_name, font_size))
+
+    def setLeading(self, leading) -> None:  # noqa: N802
+        self.calls.append(("text.setLeading", leading))
+
+    def textLine(self, text) -> None:  # noqa: N802
+        self.lines.append(text)
 
 
 def test_pdf_render_context_converts_text_top_left_y_to_pdf_baseline() -> None:
@@ -131,6 +156,47 @@ def test_pdf_render_context_converts_text_top_left_y_to_pdf_baseline() -> None:
     assert 0 <= translated_call[2] <= 72
     assert ("setFillColorRGB", 0, 0, 0) in pdf.calls
     assert ("drawString", 0, 0, "Known Good") in pdf.calls
+
+
+def test_pdf_render_context_wraps_text_inside_box() -> None:
+    pdf = RecordingPdfCanvas()
+    context = PdfRenderContext(pdf, page_height=72)
+
+    context.draw_text(
+        x=8,
+        y=18,
+        text="Known Good",
+        font_family="Arial",
+        font_size=12,
+        bold=False,
+        italic=False,
+        width=42,
+        height=30,
+        wrap=True,
+    )
+
+    assert ("translate", 8, 54) in pdf.calls
+    assert ("drawText", ["Known", "Good"]) in pdf.calls
+
+
+def test_pdf_render_context_preserves_explicit_newlines_when_wrapping() -> None:
+    pdf = RecordingPdfCanvas()
+    context = PdfRenderContext(pdf, page_height=72)
+
+    context.draw_text(
+        x=8,
+        y=18,
+        text="Alpha\nBeta Gamma",
+        font_family="Arial",
+        font_size=12,
+        bold=False,
+        italic=False,
+        width=100,
+        height=40,
+        wrap=True,
+    )
+
+    assert ("drawText", ["Alpha", "Beta Gamma"]) in pdf.calls
 
 
 def test_pdf_render_context_converts_image_top_left_y_to_pdf_bottom_left() -> None:

@@ -7,7 +7,7 @@ from math import ceil, floor
 
 from PySide6.QtCore import QRect, QRectF, Qt
 from PySide6.QtGui import QFont, QFontMetricsF, QPainter, QPen
-from PySide6.QtWidgets import QLineEdit, QWidget
+from PySide6.QtWidgets import QFrame, QTextEdit, QWidget
 
 from label_pad.model import DocumentObject, LabelDocument, ObjectGeometry, TextObject
 from label_pad.profiles import LabelProfile
@@ -22,7 +22,7 @@ MIN_TEXT_BOX_WIDTH = 12
 MIN_TEXT_BOX_HEIGHT = 10
 MIN_EDITOR_WIDTH = 48
 EDITOR_STYLE = """
-QLineEdit {
+QTextEdit {
     background: white;
     color: black;
     border: none;
@@ -176,6 +176,22 @@ def measured_text_box_size(text_object: TextObject) -> tuple[float, float]:
         text_width + TEXT_BOX_HORIZONTAL_PADDING * 2,
         text_height + TEXT_BOX_VERTICAL_PADDING * 2,
     )
+
+
+def natural_text_box_height(text_object: TextObject, width: float) -> float:
+    """Return the content-aware minimum box height for current text/font/wrap."""
+    font = editor_font_for_text_object(text_object)
+    metrics = QFontMetricsF(font)
+    inner_width = max(1, width - TEXT_BOX_HORIZONTAL_PADDING * 2)
+    line_count = len(
+        _wrapped_canvas_lines(
+            text=text_object.text or " ",
+            metrics=metrics,
+            width=inner_width,
+            wrap=text_object.wrap,
+        )
+    )
+    return line_count * metrics.lineSpacing() + TEXT_BOX_VERTICAL_PADDING * 2
 
 
 def canvas_text_layout(text_object: TextObject) -> CanvasTextLayout:
@@ -438,8 +454,13 @@ class LabelCanvas(QWidget):
             profile=self._profile,
         )
         if self._resize_state is not None:
+            label_object = self._document.find_by_id(self._resize_state.object_id)
+            if not isinstance(label_object, TextObject):
+                event.ignore()
+                return
             width, height = _resized_object_size(
                 resize_state=self._resize_state,
+                text_object=label_object,
                 pointer_x=pointer_x,
                 pointer_y=pointer_y,
                 label_width=label_rect.width(),
@@ -564,6 +585,9 @@ class LabelCanvas(QWidget):
             text_object.geometry.id if created else None
         )
         self._text_editor = _InlineTextEditor(self._cancel_text_edit, self)
+        self._text_editor.set_commit_callback(
+            lambda: self._finish_text_edit(commit=True)
+        )
         self._text_editor.setFrame(False)
         self._text_editor.setStyleSheet(EDITOR_STYLE)
         self._text_editor.setContentsMargins(0, 0, 0, 0)
@@ -574,12 +598,6 @@ class LabelCanvas(QWidget):
         self._text_editor.setFont(editor_font_for_text_object(text_object))
         self._text_editor.setText(text_object.text)
         self._text_editor.textChanged.connect(self._resize_text_editor)
-        self._text_editor.returnPressed.connect(
-            lambda: self._finish_text_edit(commit=True)
-        )
-        self._text_editor.editingFinished.connect(
-            lambda: self._finish_text_edit(commit=True)
-        )
 
         label_rect = preview_rect(
             width=self.width(),
@@ -754,6 +772,7 @@ def _dragged_object_position(
 def _resized_object_size(
     *,
     resize_state: ResizeState,
+    text_object: TextObject,
     pointer_x: float,
     pointer_y: float,
     label_width: float,
@@ -763,9 +782,12 @@ def _resized_object_size(
     height = resize_state.start_height + pointer_y - resize_state.start_pointer_y
     max_width = max(MIN_TEXT_BOX_WIDTH, label_width - resize_state.object_x)
     max_height = max(MIN_TEXT_BOX_HEIGHT, label_height - resize_state.object_y)
+    width = min(max(width, MIN_TEXT_BOX_WIDTH), max_width)
+    natural_height = natural_text_box_height(text_object, width)
+    min_height = min(max_height, max(MIN_TEXT_BOX_HEIGHT, natural_height))
     return (
-        min(max(width, MIN_TEXT_BOX_WIDTH), max_width),
-        min(max(height, MIN_TEXT_BOX_HEIGHT), max_height),
+        width,
+        min(max(height, min_height), max_height),
     )
 
 
@@ -779,14 +801,96 @@ def _with_measured_text_box(text_object: TextObject) -> TextObject:
     )
 
 
-class _InlineTextEditor(QLineEdit):
+def _wrapped_canvas_lines(
+    *,
+    text: str,
+    metrics: QFontMetricsF,
+    width: float,
+    wrap: bool,
+) -> list[str]:
+    lines: list[str] = []
+    paragraphs = text.split("\n") or [""]
+    for paragraph in paragraphs:
+        if not wrap:
+            lines.append(paragraph)
+            continue
+        if paragraph == "":
+            lines.append("")
+            continue
+        current = ""
+        for word in paragraph.split(" "):
+            candidate = word if current == "" else f"{current} {word}"
+            if metrics.horizontalAdvance(candidate) <= width:
+                current = candidate
+                continue
+            if current:
+                lines.append(current)
+            current = _fit_canvas_word(word, metrics, width, lines)
+        lines.append(current)
+    return lines
+
+
+def _fit_canvas_word(
+    word: str,
+    metrics: QFontMetricsF,
+    width: float,
+    lines: list[str],
+) -> str:
+    current = ""
+    for character in word:
+        candidate = current + character
+        if current and metrics.horizontalAdvance(candidate) > width:
+            lines.append(current)
+            current = character
+        else:
+            current = candidate
+    return current
+
+
+class _InlineTextEditor(QTextEdit):
     def __init__(self, cancel_callback, parent: QWidget) -> None:
         super().__init__(parent)
         self._cancel_callback = cancel_callback
+        self._commit_callback = None
+        self._finished = False
+        self.setAcceptRichText(False)
+
+    def set_commit_callback(self, commit_callback) -> None:
+        self._commit_callback = commit_callback
+
+    def setFrame(self, enabled: bool) -> None:  # noqa: N802
+        shape = QFrame.Shape.StyledPanel if enabled else QFrame.Shape.NoFrame
+        self.setFrameShape(shape)
+
+    def setTextMargins(self, left: int, top: int, right: int, bottom: int) -> None:  # noqa: N802, ARG002
+        self.document().setDocumentMargin(0)
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        self.setPlainText(text)
+
+    def text(self) -> str:
+        return self.toPlainText()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         if event.key() == Qt.Key.Key_Escape:
+            self._finished = True
             self._cancel_callback()
             event.accept()
             return
+        if event.key() in {Qt.Key.Key_Return, Qt.Key.Key_Enter} and not (
+            event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+        ):
+            self._finished = True
+            if self._commit_callback is not None:
+                self._commit_callback()
+            event.accept()
+            return
         super().keyPressEvent(event)
+
+    def focusOutEvent(self, event) -> None:  # noqa: N802
+        super().focusOutEvent(event)
+        if self._finished:
+            return
+        self._finished = True
+        if self._commit_callback is not None:
+            self._commit_callback()

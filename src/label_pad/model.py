@@ -31,6 +31,7 @@ class TextObject:
     font_size: float = 12
     bold: bool = False
     italic: bool = False
+    wrap: bool = True
 
 
 @dataclass(frozen=True)
@@ -98,6 +99,7 @@ class LabelDocument:
                 font_size=self.defaults.font_size,
                 bold=self.defaults.bold,
                 italic=self.defaults.italic,
+                wrap=True,
             )
         )
 

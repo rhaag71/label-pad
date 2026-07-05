@@ -2,17 +2,20 @@ import os
 from dataclasses import replace
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QKeyEvent, QTextCursor
 from PySide6.QtWidgets import QApplication
 
 from label_pad.canvas import (
     LabelCanvas,
+    _InlineTextEditor,
     canvas_text_layout,
     editor_font_for_text_object,
     hit_test_text_object,
     hit_test_text_resize_handle,
     label_coordinates_from_widget,
     measured_text_box_size,
+    natural_text_box_height,
     preview_rect,
     text_object_bounds,
     text_object_hit_rect,
@@ -688,7 +691,7 @@ def test_resize_handle_drag_enforces_minimum_size() -> None:
                 height=20,
                 selected=True,
             ),
-            text="Text",
+            text="X",
         )
     )
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
@@ -701,7 +704,10 @@ def test_resize_handle_drag_enforces_minimum_size() -> None:
     assert resized_object.geometry.x == 50
     assert resized_object.geometry.y == 30
     assert resized_object.geometry.width == 12
-    assert resized_object.geometry.height == 10
+    assert resized_object.geometry.height == natural_text_box_height(
+        resized_object,
+        12,
+    )
 
 
 def test_hover_over_selected_text_box_uses_move_cursor() -> None:
@@ -919,6 +925,60 @@ def test_double_click_empty_label_while_editing_commits_without_creating_text() 
     assert not event.ignored
 
 
+def test_inline_editor_enter_commits_without_inserting_newline() -> None:
+    committed = []
+    editor = _InlineTextEditor(lambda: None, None)
+    editor.set_commit_callback(lambda: committed.append(editor.text()))
+    editor.setText("Line")
+    editor.moveCursor(QTextCursor.MoveOperation.End)
+    event = QKeyEvent(
+        QEvent.Type.KeyPress,
+        Qt.Key.Key_Return,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+    editor.keyPressEvent(event)
+
+    assert committed == ["Line"]
+    assert editor.text() == "Line"
+    assert event.isAccepted()
+
+
+def test_inline_editor_shift_enter_inserts_newline() -> None:
+    committed = []
+    editor = _InlineTextEditor(lambda: None, None)
+    editor.set_commit_callback(lambda: committed.append(editor.text()))
+    editor.setText("Line")
+    editor.moveCursor(QTextCursor.MoveOperation.End)
+    event = QKeyEvent(
+        QEvent.Type.KeyPress,
+        Qt.Key.Key_Return,
+        Qt.KeyboardModifier.ShiftModifier,
+        "\n",
+    )
+
+    editor.keyPressEvent(event)
+
+    assert committed == []
+    assert editor.text() == "Line\n"
+
+
+def test_inline_editor_escape_cancels() -> None:
+    cancelled = []
+    editor = _InlineTextEditor(lambda: cancelled.append(True), None)
+    editor.setText("Line")
+    event = QKeyEvent(
+        QEvent.Type.KeyPress,
+        Qt.Key.Key_Escape,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+    editor.keyPressEvent(event)
+
+    assert cancelled == [True]
+    assert event.isAccepted()
+
+
 def test_finish_text_edit_commits_editor_text() -> None:
     profile = LabelProfile(
         name="Wide",
@@ -950,6 +1010,32 @@ def test_finish_text_edit_commits_editor_text() -> None:
     assert canvas._text_editor is None
     assert canvas._editing_object_id is None
     assert canvas.update_count == 1
+
+
+def test_finish_text_edit_preserves_explicit_newlines() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
+    document = LabelDocument(profile_name=profile.name)
+    document.add_object(
+        TextObject(
+            geometry=ObjectGeometry(id="text", x=50, y=30, selected=True),
+            text="Old",
+        )
+    )
+    canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
+    canvas._text_editor = FakeTextEditor("Line one\nLine two")
+    canvas._editing_object_id = "text"
+
+    LabelCanvas._finish_text_edit(canvas, commit=True)
+
+    assert document.objects[0].text == "Line one\nLine two"
 
 
 def test_finish_text_edit_preserves_existing_box_height() -> None:

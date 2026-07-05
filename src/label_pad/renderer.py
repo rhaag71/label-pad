@@ -7,6 +7,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QFont, QFontMetricsF, QPainter, QPixmap
+from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfgen.canvas import Canvas
 
 from label_pad.model import ImageObject, LabelDocument, TextObject
@@ -26,6 +27,9 @@ class RenderContext(ABC):
         font_size: float,
         bold: bool,
         italic: bool,
+        width: float = 0,
+        height: float = 0,
+        wrap: bool = False,
         rotation: float = 0,
     ) -> None:
         """Draw text."""
@@ -73,6 +77,9 @@ class QtRenderContext(RenderContext):
         font_size: float,
         bold: bool,
         italic: bool,
+        width: float = 0,
+        height: float = 0,
+        wrap: bool = False,
         rotation: float = 0,
     ) -> None:
         self._painter.save()
@@ -83,7 +90,18 @@ class QtRenderContext(RenderContext):
         font.setBold(bold)
         font.setItalic(italic)
         self._painter.setFont(font)
-        self._painter.drawText(0, QFontMetricsF(font).ascent(), text)
+        if wrap and width > 0 and height > 0:
+            self._painter.drawText(
+                QRectF(0, 0, width, height),
+                (
+                    Qt.AlignmentFlag.AlignLeft
+                    | Qt.AlignmentFlag.AlignTop
+                    | Qt.TextFlag.TextWordWrap
+                ),
+                text,
+            )
+        else:
+            self._painter.drawText(0, QFontMetricsF(font).ascent(), text)
         self._painter.restore()
 
     def draw_image(
@@ -148,15 +166,64 @@ class PdfRenderContext(RenderContext):
         font_size: float,
         bold: bool,
         italic: bool,
+        width: float = 0,
+        height: float = 0,
+        wrap: bool = False,
         rotation: float = 0,
     ) -> None:
         self._pdf.saveState()
+        font_name = _pdf_font_name(font_family, bold, italic)
+        if wrap and width > 0 and height > 0:
+            self._draw_wrapped_text(
+                x=x,
+                y=y,
+                text=text,
+                font_name=font_name,
+                font_size=font_size,
+                width=width,
+                height=height,
+                rotation=rotation,
+            )
+            self._pdf.restoreState()
+            return
+
         self._pdf.translate(x, self._top_to_bottom_y(y, font_size))
         self._pdf.rotate(rotation)
         self._pdf.setFillColorRGB(0, 0, 0)
-        self._pdf.setFont(_pdf_font_name(font_family, bold, italic), font_size)
+        self._pdf.setFont(font_name, font_size)
         self._pdf.drawString(0, 0, text)
         self._pdf.restoreState()
+
+    def _draw_wrapped_text(
+        self,
+        *,
+        x: float,
+        y: float,
+        text: str,
+        font_name: str,
+        font_size: float,
+        width: float,
+        height: float,
+        rotation: float,
+    ) -> None:
+        self._pdf.translate(x, self._page_height - y)
+        self._pdf.rotate(rotation)
+        self._pdf.setFillColorRGB(0, 0, 0)
+        self._pdf.setFont(font_name, font_size)
+        line_height = font_size * 1.2
+        lines = _wrap_pdf_text(
+            text=text,
+            font_name=font_name,
+            font_size=font_size,
+            width=width,
+        )
+        max_lines = max(1, int(height // line_height))
+        text_object = self._pdf.beginText(0, -font_size)
+        text_object.setFont(font_name, font_size)
+        text_object.setLeading(line_height)
+        for line in lines[:max_lines]:
+            text_object.textLine(line)
+        self._pdf.drawText(text_object)
 
     def draw_image(
         self,
@@ -218,6 +285,9 @@ class Renderer:
                     font_size=label_object.font_size,
                     bold=label_object.bold,
                     italic=label_object.italic,
+                    width=geometry.width,
+                    height=geometry.height,
+                    wrap=label_object.wrap,
                     rotation=geometry.rotation,
                 )
             elif isinstance(label_object, ImageObject):
@@ -242,3 +312,51 @@ def _pdf_font_name(font_family: str, bold: bool, italic: bool) -> str:
     if italic:
         return "Helvetica-Oblique"
     return "Helvetica"
+
+
+def _wrap_pdf_text(
+    *,
+    text: str,
+    font_name: str,
+    font_size: float,
+    width: float,
+) -> list[str]:
+    lines: list[str] = []
+    paragraphs = text.splitlines() or [""]
+    for paragraph in paragraphs:
+        if paragraph == "":
+            lines.append("")
+            continue
+        current = ""
+        for word in paragraph.split(" "):
+            candidate = word if current == "" else f"{current} {word}"
+            if _pdf_text_width(candidate, font_name, font_size) <= width:
+                current = candidate
+                continue
+            if current:
+                lines.append(current)
+            current = _fit_pdf_word(word, font_name, font_size, width, lines)
+        lines.append(current)
+    return lines
+
+
+def _fit_pdf_word(
+    word: str,
+    font_name: str,
+    font_size: float,
+    width: float,
+    lines: list[str],
+) -> str:
+    current = ""
+    for character in word:
+        candidate = current + character
+        if current and _pdf_text_width(candidate, font_name, font_size) > width:
+            lines.append(current)
+            current = character
+        else:
+            current = candidate
+    return current
+
+
+def _pdf_text_width(text: str, font_name: str, font_size: float) -> float:
+    return pdfmetrics.stringWidth(text, font_name, font_size)

@@ -16,13 +16,13 @@ The application should feel closer to Notepad than Microsoft Word.
 
 Objectives:
 
-- Shared object geometry (x, y, width, height, rotation)
-- Drag to move selected object
-- Resize handles
-- Text wrapping
-- Basic font selection
-- Basic text formatting
-- Image objects using the same geometry model
+- Completed: shared object geometry (x, y, width, height, rotation)
+- Completed: drag to move selected object
+- Completed: bottom-right resize handle
+- Active: text wrapping
+- Upcoming: basic font selection
+- Upcoming: basic text formatting
+- Upcoming: image objects using the same geometry model
 
 Definition of Done:
 
