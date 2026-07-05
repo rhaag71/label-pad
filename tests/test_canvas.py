@@ -3,11 +3,13 @@ from dataclasses import replace
 
 import pytest
 from PySide6.QtCore import QEvent, Qt
-from PySide6.QtGui import QKeyEvent, QTextCursor
+from PySide6.QtGui import QFocusEvent, QKeyEvent, QTextCursor
 from PySide6.QtWidgets import QApplication
 
 from label_pad.canvas import (
     EDITOR_STYLE,
+    TEXT_BOX_HORIZONTAL_PADDING,
+    TEXT_BOX_VERTICAL_PADDING,
     LabelCanvas,
     _InlineTextEditor,
     canvas_text_layout,
@@ -251,6 +253,10 @@ def test_canvas_text_layout_editor_rect_keeps_left_edge_fixed_for_long_text() ->
     assert editor_rect.x() + editor_rect.width() == label_rect.x() + label_rect.width()
 
 
+def test_text_box_padding_is_balanced() -> None:
+    assert TEXT_BOX_HORIZONTAL_PADDING == TEXT_BOX_VERTICAL_PADDING
+
+
 def test_editor_font_matches_text_object_style() -> None:
     text_object = TextObject(
         text="Text",
@@ -263,7 +269,7 @@ def test_editor_font_matches_text_object_style() -> None:
     font = editor_font_for_text_object(text_object)
 
     assert font.family() == "Courier New"
-    assert font.pointSizeF() == 18.5
+    assert font.pixelSize() == 18
     assert font.bold() is True
     assert font.italic() is True
 
@@ -783,9 +789,7 @@ def test_resize_narrower_increases_live_minimum_height_for_wrapped_text() -> Non
 
     resized_object = document.find_by_id("text")
     assert isinstance(resized_object, TextObject)
-    assert resized_object.geometry.width == natural_text_box_minimum_width(
-        resized_object
-    )
+    assert resized_object.geometry.width == 40
     assert resized_object.geometry.height == natural_text_box_height(
         resized_object,
         resized_object.geometry.width,
@@ -1045,7 +1049,7 @@ def test_double_click_empty_label_while_editing_commits_without_creating_text() 
     assert not event.ignored
 
 
-def test_inline_editor_enter_commits_without_inserting_newline() -> None:
+def test_inline_editor_enter_inserts_newline_without_committing() -> None:
     committed = []
     editor = _InlineTextEditor(lambda: None, None)
     editor.set_commit_callback(lambda: committed.append(editor.text()))
@@ -1055,13 +1059,13 @@ def test_inline_editor_enter_commits_without_inserting_newline() -> None:
         QEvent.Type.KeyPress,
         Qt.Key.Key_Return,
         Qt.KeyboardModifier.NoModifier,
+        "\n",
     )
 
     editor.keyPressEvent(event)
 
-    assert committed == ["Line"]
-    assert editor.text() == "Line"
-    assert event.isAccepted()
+    assert committed == []
+    assert editor.text() == "Line\n"
 
 
 def test_inline_editor_shift_enter_inserts_newline() -> None:
@@ -1097,6 +1101,18 @@ def test_inline_editor_escape_cancels() -> None:
 
     assert cancelled == [True]
     assert event.isAccepted()
+
+
+def test_inline_editor_focus_out_commits_text() -> None:
+    committed = []
+    editor = _InlineTextEditor(lambda: None, None)
+    editor.set_commit_callback(lambda: committed.append(editor.text()))
+    editor.setText("Committed")
+    event = QFocusEvent(QEvent.Type.FocusOut)
+
+    editor.focusOutEvent(event)
+
+    assert committed == ["Committed"]
 
 
 def test_inline_editor_scrollbars_are_disabled() -> None:
@@ -1137,6 +1153,7 @@ def test_resize_text_editor_auto_grows_new_text_box_width_while_typing() -> None
     assert canvas._text_editor.geometry.width() > measured_text_box_size(
         text_object
     )[0]
+    assert canvas._text_editor.geometry.right() <= 224
 
 
 def test_finish_text_edit_commits_editor_text() -> None:
@@ -1233,9 +1250,12 @@ def test_finish_text_edit_preserves_width_and_enforces_minimum_height() -> None:
     LabelCanvas._finish_text_edit(canvas, commit=True)
 
     assert document.objects[0].geometry.width == 24
-    assert document.objects[0].geometry.height == natural_text_box_height(
-        document.objects[0],
-        24,
+    assert document.objects[0].geometry.height == min(
+        70,
+        natural_text_box_height(
+            document.objects[0],
+            24,
+        ),
     )
 
 
@@ -1264,12 +1284,74 @@ def test_finish_text_edit_auto_sized_text_grows_to_unwrapped_text_width() -> Non
 
     updated_object = document.objects[0]
     assert updated_object.geometry.width == natural_text_box_auto_width(
-        updated_object
+        updated_object,
+        max_width=150,
     )
     assert updated_object.geometry.height == natural_text_box_height(
         updated_object,
         updated_object.geometry.width,
     )
+
+
+def test_finish_text_edit_clamps_long_auto_sized_text_to_label_bounds() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
+    document = LabelDocument(profile_name=profile.name)
+    document.add_object(
+        TextObject(
+            geometry=ObjectGeometry(id="text", x=150, y=30, selected=True),
+            text="Text",
+        )
+    )
+    canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
+    canvas._text_editor = FakeTextEditor("This is a very long line of label text")
+    canvas._editing_object_id = "text"
+
+    LabelCanvas._finish_text_edit(canvas, commit=True)
+
+    updated_object = document.objects[0]
+    assert updated_object.geometry.x == 150
+    assert updated_object.geometry.y == 30
+    assert updated_object.geometry.width == 50
+    assert updated_object.geometry.x + updated_object.geometry.width == 200
+    assert text_object_resize_handle_rect(updated_object).right() <= 200
+
+
+def test_finish_text_edit_keeps_resize_handle_inside_label_after_tall_wrap() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
+    document = LabelDocument(profile_name=profile.name)
+    document.add_object(
+        TextObject(
+            geometry=ObjectGeometry(id="text", x=150, y=85, selected=True),
+            text="Text",
+        )
+    )
+    canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
+    canvas._text_editor = FakeTextEditor(
+        "This text wraps into more lines than the remaining label height can show"
+    )
+    canvas._editing_object_id = "text"
+
+    LabelCanvas._finish_text_edit(canvas, commit=True)
+
+    updated_object = document.objects[0]
+    assert text_object_resize_handle_rect(updated_object).right() <= 200
+    assert text_object_resize_handle_rect(updated_object).bottom() <= 100
 
 
 def test_resized_text_box_wraps_at_user_width_after_edit() -> None:

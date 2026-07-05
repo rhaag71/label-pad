@@ -14,7 +14,7 @@ from label_pad.profiles import LabelProfile
 from label_pad.renderer import QtRenderContext, Renderer
 
 TEXT_BOX_HORIZONTAL_PADDING = 3
-TEXT_BOX_VERTICAL_PADDING = 1
+TEXT_BOX_VERTICAL_PADDING = 3
 TEXT_BOX_HIT_SLOP = 4
 RESIZE_HANDLE_SIZE = 6
 RESIZE_HANDLE_HIT_SLOP = 3
@@ -137,7 +137,7 @@ class CanvasTextLayout:
 def editor_font_for_text_object(text_object: TextObject) -> QFont:
     """Return the inline editor font matching the rendered text style."""
     font = QFont(text_object.font_family)
-    font.setPointSizeF(text_object.font_size)
+    font.setPixelSize(max(1, round(text_object.font_size)))
     font.setBold(text_object.bold)
     font.setItalic(text_object.italic)
     return font
@@ -180,7 +180,10 @@ def measured_text_box_size(text_object: TextObject) -> tuple[float, float]:
     )
 
 
-def natural_text_box_auto_width(text_object: TextObject) -> float:
+def natural_text_box_auto_width(
+    text_object: TextObject,
+    max_width: float | None = None,
+) -> float:
     """Return the unwrapped width needed for explicit text lines."""
     font = editor_font_for_text_object(text_object)
     metrics = QFontMetricsF(font)
@@ -188,7 +191,10 @@ def natural_text_box_auto_width(text_object: TextObject) -> float:
         metrics.horizontalAdvance(line or " ")
         for line in (text_object.text or " ").split("\n")
     )
-    return text_width + TEXT_BOX_HORIZONTAL_PADDING * 2
+    width = text_width + TEXT_BOX_HORIZONTAL_PADDING * 2
+    if max_width is not None:
+        width = min(width, max(1, max_width))
+    return width
 
 
 def natural_text_box_minimum_width(text_object: TextObject) -> float:
@@ -655,9 +661,13 @@ class LabelCanvas(QWidget):
             height=self.height(),
             profile=self._profile,
         )
+        max_width = max(1, label_rect.width() - label_object.geometry.x)
         editor.setGeometry(
             canvas_text_layout(
-                _with_live_editor_text_box(replace(label_object, text=editor.text()))
+                _with_live_editor_text_box(
+                    replace(label_object, text=editor.text()),
+                    max_width=max_width,
+                )
             ).editor_rect(label_rect)
         )
 
@@ -677,20 +687,32 @@ class LabelCanvas(QWidget):
         if commit:
             label_object = self._document.find_by_id(object_id)
             if isinstance(label_object, TextObject):
+                label_rect = preview_rect(
+                    width=self.width(),
+                    height=self.height(),
+                    profile=self._profile,
+                )
+                max_width = max(1, label_rect.width() - label_object.geometry.x)
+                max_height = max(1, label_rect.height() - label_object.geometry.y)
                 updated_object = replace(label_object, text=editor.text())
                 width = (
-                    natural_text_box_auto_width(updated_object)
+                    natural_text_box_auto_width(updated_object, max_width=max_width)
                     if label_object.auto_size
                     else label_object.geometry.width
                 )
                 if width <= 0:
-                    width = natural_text_box_auto_width(updated_object)
+                    width = natural_text_box_auto_width(
+                        updated_object,
+                        max_width=max_width,
+                    )
+                width = min(width, max_width)
                 natural_height = natural_text_box_height(updated_object, width)
                 height = (
                     natural_height
                     if label_object.auto_size
                     else max(label_object.geometry.height, natural_height)
                 )
+                height = min(height, max_height)
                 update_text_object(
                     self._document,
                     object_id,
@@ -842,9 +864,13 @@ def _with_measured_text_box(text_object: TextObject) -> TextObject:
     )
 
 
-def _with_live_editor_text_box(text_object: TextObject) -> TextObject:
+def _with_live_editor_text_box(
+    text_object: TextObject,
+    *,
+    max_width: float | None = None,
+) -> TextObject:
     if text_object.auto_size:
-        width = natural_text_box_auto_width(text_object)
+        width = natural_text_box_auto_width(text_object, max_width=max_width)
         height = natural_text_box_height(text_object, width)
         return replace(
             text_object,
@@ -943,14 +969,6 @@ class _InlineTextEditor(QTextEdit):
         if event.key() == Qt.Key.Key_Escape:
             self._finished = True
             self._cancel_callback()
-            event.accept()
-            return
-        if event.key() in {Qt.Key.Key_Return, Qt.Key.Key_Enter} and not (
-            event.modifiers() & Qt.KeyboardModifier.ShiftModifier
-        ):
-            self._finished = True
-            if self._commit_callback is not None:
-                self._commit_callback()
             event.accept()
             return
         super().keyPressEvent(event)

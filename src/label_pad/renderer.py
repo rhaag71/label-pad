@@ -13,6 +13,8 @@ from reportlab.pdfgen.canvas import Canvas
 from label_pad.model import ImageObject, LabelDocument, TextObject
 
 PDF_TEXT_SCALE = 72 / 96
+TEXT_BOX_HORIZONTAL_PADDING = 3
+TEXT_BOX_VERTICAL_PADDING = 3
 
 
 class RenderContext(ABC):
@@ -88,13 +90,19 @@ class QtRenderContext(RenderContext):
         self._painter.translate(x, y)
         self._painter.rotate(rotation)
         font = QFont(font_family)
-        font.setPointSizeF(font_size)
+        font.setPixelSize(max(1, round(font_size)))
         font.setBold(bold)
         font.setItalic(italic)
         self._painter.setFont(font)
+        self._painter.setPen(Qt.GlobalColor.black)
         if wrap and width > 0 and height > 0:
             self._painter.drawText(
-                QRectF(0, 0, width, height),
+                QRectF(
+                    TEXT_BOX_HORIZONTAL_PADDING,
+                    TEXT_BOX_VERTICAL_PADDING,
+                    max(1, width - TEXT_BOX_HORIZONTAL_PADDING * 2),
+                    max(1, height - TEXT_BOX_VERTICAL_PADDING * 2),
+                ),
                 (
                     Qt.AlignmentFlag.AlignLeft
                     | Qt.AlignmentFlag.AlignTop
@@ -103,7 +111,11 @@ class QtRenderContext(RenderContext):
                 text,
             )
         else:
-            self._painter.drawText(0, QFontMetricsF(font).ascent(), text)
+            self._painter.drawText(
+                TEXT_BOX_HORIZONTAL_PADDING,
+                TEXT_BOX_VERTICAL_PADDING + QFontMetricsF(font).ascent(),
+                text,
+            )
         self._painter.restore()
 
     def draw_image(
@@ -190,7 +202,13 @@ class PdfRenderContext(RenderContext):
             self._pdf.restoreState()
             return
 
-        self._pdf.translate(x, self._top_to_bottom_y(y, pdf_font_size))
+        self._pdf.translate(
+            x + TEXT_BOX_HORIZONTAL_PADDING,
+            self._top_to_bottom_y(
+                y + TEXT_BOX_VERTICAL_PADDING,
+                pdf_font_size,
+            ),
+        )
         self._pdf.rotate(rotation)
         self._pdf.setFillColorRGB(0, 0, 0)
         self._pdf.setFont(font_name, pdf_font_size)
@@ -213,15 +231,20 @@ class PdfRenderContext(RenderContext):
         self._pdf.rotate(rotation)
         self._pdf.setFillColorRGB(0, 0, 0)
         self._pdf.setFont(font_name, font_size)
+        inner_width = max(1, width - TEXT_BOX_HORIZONTAL_PADDING * 2)
+        inner_height = max(1, height - TEXT_BOX_VERTICAL_PADDING * 2)
         line_height = font_size * 1.2
         lines = _wrap_pdf_text(
             text=text,
             font_name=font_name,
             font_size=font_size,
-            width=width,
+            width=inner_width,
         )
-        max_lines = max(1, int(height // line_height))
-        text_object = self._pdf.beginText(0, -font_size)
+        max_lines = max(1, int(inner_height // line_height))
+        text_object = self._pdf.beginText(
+            TEXT_BOX_HORIZONTAL_PADDING,
+            -TEXT_BOX_VERTICAL_PADDING - font_size,
+        )
         text_object.setFont(font_name, font_size)
         text_object.setLeading(line_height)
         for line in lines[:max_lines]:
