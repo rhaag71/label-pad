@@ -8,7 +8,6 @@ from typing import Any
 
 import yaml
 
-
 DEFAULT_PROFILES_YAML = """
 profiles:
   - name: 4 x 6 Shipping Label

@@ -19,7 +19,12 @@ def test_export_pdf_writes_pdf_with_profile_page_size(tmp_path) -> None:
 
     assert output_path.exists()
     assert output_path.read_bytes().startswith(b"%PDF-")
-    assert _media_box(output_path.read_bytes()) == (0.0, 0.0, 283.4646, 141.7323)
+    assert _media_box(output_path.read_bytes()) == (
+        0.0,
+        0.0,
+        283.4646,
+        141.7323,
+    )
 
 
 def test_page_size_points_uses_profile_physical_size() -> None:
@@ -40,6 +45,11 @@ def test_page_size_points_uses_profile_physical_size() -> None:
 
 
 def _media_box(pdf_data: bytes) -> tuple[float, float, float, float]:
-    match = re.search(rb"/MediaBox\s*\[\s*([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s*\]", pdf_data)
+    match = re.search(
+        rb"/MediaBox\s*\[\s*"
+        rb"([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)"
+        rb"\s*\]",
+        pdf_data,
+    )
     assert match is not None
     return tuple(round(float(value), 4) for value in match.groups())

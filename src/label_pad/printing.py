@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 
 def print_pdf(path: str | Path, printer_name: str | None = None) -> Path:
