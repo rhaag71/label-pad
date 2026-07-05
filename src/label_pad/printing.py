@@ -1,0 +1,20 @@
+"""System printing through CUPS-compatible commands."""
+
+from __future__ import annotations
+
+from pathlib import Path
+import subprocess
+
+
+def print_pdf(path: str | Path, printer_name: str | None = None) -> Path:
+    """Send a PDF to the system print spooler."""
+    pdf_path = Path(path)
+    if not pdf_path.exists():
+        raise FileNotFoundError(pdf_path)
+
+    command = ["lp"]
+    if printer_name:
+        command.extend(["-d", printer_name])
+    command.append(str(pdf_path))
+    subprocess.run(command, check=True)
+    return pdf_path
