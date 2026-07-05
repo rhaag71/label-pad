@@ -2,32 +2,9 @@ from label_pad.main_window import (
     MainWindow,
     is_likely_thermal_printer,
     ordered_printer_names,
-    seeded_document,
 )
 from label_pad.model import LabelDocument, TextObject
 from label_pad.profiles import LabelProfile
-
-
-def test_seeded_document_contains_known_good_text() -> None:
-    profile = LabelProfile(
-        name="Test",
-        page_width_mm=100,
-        page_height_mm=50,
-        label_width_mm=100,
-        label_height_mm=50,
-        columns=1,
-        rows=1,
-    )
-
-    document = seeded_document(profile)
-
-    assert document.profile_name == "Test"
-    assert len(document.objects) == 1
-    text_object = document.objects[0]
-    assert isinstance(text_object, TextObject)
-    assert text_object.text == "Known Good"
-    assert text_object.geometry.x == 8
-    assert text_object.geometry.y == 18
 
 
 def test_likely_thermal_printer_matching_is_case_insensitive() -> None:
@@ -65,6 +42,40 @@ def test_rollo_is_ordered_before_non_thermal_printers() -> None:
         "Rollo X1038",
         "Office LaserJet",
     ]
+
+
+def test_profile_change_replaces_preview_with_empty_document() -> None:
+    profile = LabelProfile(
+        name="Rollo 2 x 1",
+        page_width_mm=50.8,
+        page_height_mm=25.4,
+        label_width_mm=50.8,
+        label_height_mm=25.4,
+        columns=1,
+        rows=1,
+    )
+    old_document = LabelDocument(profile_name="Old")
+    old_document.add_object(TextObject(text="Existing"))
+    profile_changes = []
+
+    class FakeProfileCombo:
+        def currentData(self):
+            return profile
+
+    class FakeCanvas:
+        def set_profile(self, changed_profile, changed_document) -> None:
+            profile_changes.append((changed_profile, changed_document))
+
+    window = MainWindow.__new__(MainWindow)
+    window._profile_combo = FakeProfileCombo()
+    window._canvas = FakeCanvas()
+    window._document = old_document
+
+    MainWindow._profile_changed(window)
+
+    assert window._document.profile_name == profile.name
+    assert window._document.objects == []
+    assert profile_changes == [(profile, window._document)]
 
 
 def test_print_label_exports_the_active_preview_document(tmp_path, monkeypatch) -> None:

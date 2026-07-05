@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from label_pad.canvas import LabelCanvas
-from label_pad.model import LabelDocument, ObjectGeometry, TextObject
+from label_pad.model import LabelDocument
 from label_pad.pdf_export import export_pdf
 from label_pad.printing import print_pdf
 from label_pad.profiles import LabelProfile, default_profile_index, load_profiles
@@ -33,18 +33,6 @@ THERMAL_PRINTER_KEYWORDS = (
 )
 
 BROTHER_THERMAL_KEYWORDS = ("ql", "td", "pt", "label", "thermal")
-
-
-def seeded_document(profile: LabelProfile) -> LabelDocument:
-    """Create a temporary developer-seeded document for render validation."""
-    document = LabelDocument(profile_name=profile.name)
-    document.add_object(
-        TextObject(
-            geometry=ObjectGeometry(x=8, y=18),
-            text="Known Good",
-        )
-    )
-    return document
 
 
 def is_likely_thermal_printer(printer_name: str) -> bool:
@@ -80,7 +68,7 @@ class MainWindow(QMainWindow):
         for profile in self._profiles:
             self._profile_combo.addItem(profile.name, profile)
         self._profile_combo.setCurrentIndex(default_profile_index(self._profiles))
-        self._document = seeded_document(self.current_profile)
+        self._document = LabelDocument(profile_name=self.current_profile.name)
 
         self._printer_combo = QComboBox()
         self._load_printers()
@@ -129,7 +117,7 @@ class MainWindow(QMainWindow):
             self._printer_combo.addItem("System default")
 
     def _profile_changed(self) -> None:
-        self._document = seeded_document(self.current_profile)
+        self._document = LabelDocument(profile_name=self.current_profile.name)
         self._canvas.set_profile(self.current_profile, self._document)
 
     def print_label(self) -> None:

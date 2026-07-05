@@ -2,13 +2,20 @@ from pathlib import Path
 
 import pytest
 
-from label_pad.model import ImageObject, LabelDocument, ObjectGeometry, TextObject
+from label_pad.model import (
+    DocumentDefaults,
+    ImageObject,
+    LabelDocument,
+    ObjectGeometry,
+    TextObject,
+)
 
 
 def test_document_starts_with_empty_ordered_object_list() -> None:
     document = LabelDocument(profile_name="4 x 6 Shipping Label")
 
     assert document.objects == []
+    assert document.defaults == DocumentDefaults()
 
 
 def test_text_object_defaults_and_fields() -> None:
@@ -31,6 +38,64 @@ def test_text_object_defaults_and_fields() -> None:
     assert text_object.font_size == 14
     assert text_object.bold is True
     assert text_object.italic is True
+
+
+def test_create_text_adds_default_text_object_and_returns_it() -> None:
+    document = LabelDocument(profile_name="4 x 6 Shipping Label")
+
+    text_object = document.create_text(10, 20)
+
+    assert document.objects == [text_object]
+    assert text_object.geometry.x == 10
+    assert text_object.geometry.y == 20
+    assert text_object.geometry.selected is True
+    assert text_object.text == "Text"
+    assert text_object.font_family == "Helvetica"
+    assert text_object.font_size == 14
+    assert text_object.bold is False
+    assert text_object.italic is False
+
+
+def test_create_text_accepts_text_value() -> None:
+    document = LabelDocument(profile_name="4 x 6 Shipping Label")
+
+    text_object = document.create_text(10, 20, text="Ship to")
+
+    assert text_object.text == "Ship to"
+
+
+def test_create_text_uses_document_defaults() -> None:
+    defaults = DocumentDefaults(
+        font_family="Arial",
+        font_size=12,
+        bold=True,
+        italic=True,
+    )
+    document = LabelDocument(
+        profile_name="4 x 6 Shipping Label",
+        defaults=defaults,
+    )
+
+    text_object = document.create_text(10, 20)
+
+    assert text_object.font_family == "Arial"
+    assert text_object.font_size == 12
+    assert text_object.bold is True
+    assert text_object.italic is True
+
+
+def test_create_text_deselects_existing_objects_and_selects_new_text() -> None:
+    document = LabelDocument(profile_name="4 x 6 Shipping Label")
+    old_text = document.add_object(
+        TextObject(geometry=ObjectGeometry(id="old", selected=True))
+    )
+
+    new_text = document.create_text(10, 20)
+
+    assert document.objects[0].geometry.selected is False
+    assert new_text.geometry.selected is True
+    assert document.selected_objects() == [new_text]
+    assert document.find_by_id(old_text.geometry.id) is document.objects[0]
 
 
 def test_image_object_defaults_and_fields() -> None:
