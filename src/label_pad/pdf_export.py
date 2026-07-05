@@ -8,7 +8,9 @@ from PIL import Image
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
+from label_pad.model import LabelDocument
 from label_pad.profiles import LabelProfile, load_profiles
+from label_pad.renderer import PdfRenderContext, Renderer
 
 POINTS_PER_MM = 72 / 25.4
 
@@ -35,6 +37,10 @@ def export_pdf(path: str | Path, profile: LabelProfile | None = None) -> Path:
 
     image = Image.new("RGB", (1, 1), "white")
     pdf.drawImage(ImageReader(image), 0, 0, width=width, height=height)
+    Renderer().render(
+        LabelDocument(profile_name=selected_profile.name),
+        PdfRenderContext(pdf),
+    )
     pdf.showPage()
     pdf.save()
     return output_path

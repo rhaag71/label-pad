@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import tempfile
-from pathlib import Path
 
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtPrintSupport import QPrinterInfo
@@ -89,7 +88,12 @@ class MainWindow(QMainWindow):
         if printer_name == "System default":
             printer_name = None
 
-        output_path = Path(tempfile.gettempdir()) / "label-pad-output.pdf"
+        with tempfile.NamedTemporaryFile(
+            prefix="label-pad-",
+            suffix=".pdf",
+            delete=False,
+        ) as output_file:
+            output_path = output_file.name
         export_pdf(output_path, self.current_profile)
         try:
             print_pdf(output_path, printer_name)
