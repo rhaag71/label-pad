@@ -121,7 +121,8 @@ def test_export_pdf_with_text_document_contains_visible_text_content(tmp_path) -
     content = b"\n".join(_decoded_streams(output_path.read_bytes()))
 
     assert b"0 0 0 rg" in content
-    assert b"1 0 0 1 8 42 cm" in content
+    assert b"1 0 0 1 8 45 cm" in content
+    assert b"/F1 9 Tf" in content
     assert b"(Known Good) Tj" in content
 
 

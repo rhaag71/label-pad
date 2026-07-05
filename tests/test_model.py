@@ -41,6 +41,7 @@ def test_text_object_defaults_and_fields() -> None:
     assert text_object.bold is True
     assert text_object.italic is True
     assert text_object.wrap is True
+    assert text_object.auto_size is True
 
 
 def test_create_text_adds_default_text_object_and_returns_it() -> None:
@@ -60,6 +61,7 @@ def test_create_text_adds_default_text_object_and_returns_it() -> None:
     assert text_object.bold is False
     assert text_object.italic is False
     assert text_object.wrap is True
+    assert text_object.auto_size is True
 
 
 def test_create_text_accepts_text_value() -> None:

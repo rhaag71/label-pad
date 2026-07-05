@@ -12,6 +12,8 @@ from reportlab.pdfgen.canvas import Canvas
 
 from label_pad.model import ImageObject, LabelDocument, TextObject
 
+PDF_TEXT_SCALE = 72 / 96
+
 
 class RenderContext(ABC):
     """Abstract drawing target used by the document renderer."""
@@ -173,13 +175,14 @@ class PdfRenderContext(RenderContext):
     ) -> None:
         self._pdf.saveState()
         font_name = _pdf_font_name(font_family, bold, italic)
+        pdf_font_size = font_size * PDF_TEXT_SCALE
         if wrap and width > 0 and height > 0:
             self._draw_wrapped_text(
                 x=x,
                 y=y,
                 text=text,
                 font_name=font_name,
-                font_size=font_size,
+                font_size=pdf_font_size,
                 width=width,
                 height=height,
                 rotation=rotation,
@@ -187,10 +190,10 @@ class PdfRenderContext(RenderContext):
             self._pdf.restoreState()
             return
 
-        self._pdf.translate(x, self._top_to_bottom_y(y, font_size))
+        self._pdf.translate(x, self._top_to_bottom_y(y, pdf_font_size))
         self._pdf.rotate(rotation)
         self._pdf.setFillColorRGB(0, 0, 0)
-        self._pdf.setFont(font_name, font_size)
+        self._pdf.setFont(font_name, pdf_font_size)
         self._pdf.drawString(0, 0, text)
         self._pdf.restoreState()
 
@@ -322,7 +325,7 @@ def _wrap_pdf_text(
     width: float,
 ) -> list[str]:
     lines: list[str] = []
-    paragraphs = text.splitlines() or [""]
+    paragraphs = text.split("\n") or [""]
     for paragraph in paragraphs:
         if paragraph == "":
             lines.append("")

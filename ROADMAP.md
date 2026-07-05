@@ -57,6 +57,7 @@ Potential future work includes:
 
 - Save/Open labels
 - Clipboard support
+- Copy/paste whole selected boxes
 - Drag & Drop images
 - Alignment tools
 - Snap to guides

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from label_pad.model import ImageObject, LabelDocument, ObjectGeometry, TextObject
-from label_pad.renderer import PdfRenderContext, Renderer
+from label_pad.renderer import PDF_TEXT_SCALE, PdfRenderContext, Renderer
 
 
 class RecordingRenderContext:
@@ -151,10 +151,11 @@ def test_pdf_render_context_converts_text_top_left_y_to_pdf_baseline() -> None:
         italic=False,
     )
 
-    translated_call = ("translate", 8, 42)
+    translated_call = ("translate", 8, 72 - 18 - (12 * PDF_TEXT_SCALE))
     assert translated_call in pdf.calls
     assert 0 <= translated_call[2] <= 72
     assert ("setFillColorRGB", 0, 0, 0) in pdf.calls
+    assert ("setFont", "Helvetica", 12 * PDF_TEXT_SCALE) in pdf.calls
     assert ("drawString", 0, 0, "Known Good") in pdf.calls
 
 
@@ -176,6 +177,7 @@ def test_pdf_render_context_wraps_text_inside_box() -> None:
     )
 
     assert ("translate", 8, 54) in pdf.calls
+    assert ("text.setFont", "Helvetica", 12 * PDF_TEXT_SCALE) in pdf.calls
     assert ("drawText", ["Known", "Good"]) in pdf.calls
 
 
@@ -228,6 +230,6 @@ def test_renderer_dispatches_text_object_to_pdf_render_context() -> None:
 
     Renderer().render(document, context)
 
-    assert ("translate", 8, 42) in pdf.calls
+    assert ("translate", 8, 72 - 18 - (12 * PDF_TEXT_SCALE)) in pdf.calls
     assert ("setFillColorRGB", 0, 0, 0) in pdf.calls
     assert ("drawString", 0, 0, "Known Good") in pdf.calls

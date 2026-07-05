@@ -32,6 +32,7 @@ class TextObject:
     bold: bool = False
     italic: bool = False
     wrap: bool = True
+    auto_size: bool = True
 
 
 @dataclass(frozen=True)

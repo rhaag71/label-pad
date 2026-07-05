@@ -25,7 +25,7 @@ EDITOR_STYLE = """
 QTextEdit {
     background: white;
     color: black;
-    border: none;
+    border: 1px solid #2f6fed;
     margin: 0;
     padding: 0;
     selection-background-color: #cfe3ff;
@@ -171,15 +171,40 @@ class ResizeState:
 
 def measured_text_box_size(text_object: TextObject) -> tuple[float, float]:
     """Return a sane padded box size for text using the canvas render font."""
+    return (
+        natural_text_box_auto_width(text_object),
+        natural_text_box_height(
+            text_object,
+            natural_text_box_auto_width(text_object),
+        ),
+    )
+
+
+def natural_text_box_auto_width(text_object: TextObject) -> float:
+    """Return the unwrapped width needed for explicit text lines."""
     font = editor_font_for_text_object(text_object)
     metrics = QFontMetricsF(font)
-    text = text_object.text or " "
-    text_width = max(metrics.horizontalAdvance(text), metrics.horizontalAdvance(" "))
-    text_height = metrics.ascent() + metrics.descent()
-    return (
-        text_width + TEXT_BOX_HORIZONTAL_PADDING * 2,
-        text_height + TEXT_BOX_VERTICAL_PADDING * 2,
+    text_width = max(
+        metrics.horizontalAdvance(line or " ")
+        for line in (text_object.text or " ").split("\n")
     )
+    return text_width + TEXT_BOX_HORIZONTAL_PADDING * 2
+
+
+def natural_text_box_minimum_width(text_object: TextObject) -> float:
+    """Return the minimum width that avoids breaking unbreakable words."""
+    font = editor_font_for_text_object(text_object)
+    metrics = QFontMetricsF(font)
+    words = [
+        word
+        for line in (text_object.text or " ").split("\n")
+        for word in line.split()
+    ]
+    text_width = max(
+        [metrics.horizontalAdvance(word) for word in words]
+        + [metrics.horizontalAdvance(" ")]
+    )
+    return max(MIN_TEXT_BOX_WIDTH, text_width + TEXT_BOX_HORIZONTAL_PADDING * 2)
 
 
 def natural_text_box_height(text_object: TextObject, width: float) -> float:
@@ -346,6 +371,8 @@ def resize_document_object(
     for index, label_object in enumerate(document.objects):
         if label_object.geometry.id != object_id:
             continue
+        if isinstance(label_object, TextObject):
+            label_object = replace(label_object, auto_size=False)
         updated_object = replace(
             label_object,
             geometry=replace(label_object.geometry, width=width, height=height),
@@ -630,9 +657,7 @@ class LabelCanvas(QWidget):
         )
         editor.setGeometry(
             canvas_text_layout(
-                _with_minimum_text_box_height(
-                    replace(label_object, text=editor.text())
-                )
+                _with_live_editor_text_box(replace(label_object, text=editor.text()))
             ).editor_rect(label_rect)
         )
 
@@ -653,11 +678,19 @@ class LabelCanvas(QWidget):
             label_object = self._document.find_by_id(object_id)
             if isinstance(label_object, TextObject):
                 updated_object = replace(label_object, text=editor.text())
-                width = label_object.geometry.width
+                width = (
+                    natural_text_box_auto_width(updated_object)
+                    if label_object.auto_size
+                    else label_object.geometry.width
+                )
                 if width <= 0:
-                    width, _ = measured_text_box_size(updated_object)
+                    width = natural_text_box_auto_width(updated_object)
                 natural_height = natural_text_box_height(updated_object, width)
-                height = max(label_object.geometry.height, natural_height)
+                height = (
+                    natural_height
+                    if label_object.auto_size
+                    else max(label_object.geometry.height, natural_height)
+                )
                 update_text_object(
                     self._document,
                     object_id,
@@ -789,7 +822,8 @@ def _resized_object_size(
     height = resize_state.start_height + pointer_y - resize_state.start_pointer_y
     max_width = max(MIN_TEXT_BOX_WIDTH, label_width - resize_state.object_x)
     max_height = max(MIN_TEXT_BOX_HEIGHT, label_height - resize_state.object_y)
-    width = min(max(width, MIN_TEXT_BOX_WIDTH), max_width)
+    min_width = min(max_width, natural_text_box_minimum_width(text_object))
+    width = min(max(width, min_width), max_width)
     natural_height = natural_text_box_height(text_object, width)
     min_height = min(max_height, max(MIN_TEXT_BOX_HEIGHT, natural_height))
     return (
@@ -806,6 +840,17 @@ def _with_measured_text_box(text_object: TextObject) -> TextObject:
         text_object,
         geometry=replace(text_object.geometry, width=width, height=height),
     )
+
+
+def _with_live_editor_text_box(text_object: TextObject) -> TextObject:
+    if text_object.auto_size:
+        width = natural_text_box_auto_width(text_object)
+        height = natural_text_box_height(text_object, width)
+        return replace(
+            text_object,
+            geometry=replace(text_object.geometry, width=width, height=height),
+        )
+    return _with_minimum_text_box_height(text_object)
 
 
 def _with_minimum_text_box_height(text_object: TextObject) -> TextObject:

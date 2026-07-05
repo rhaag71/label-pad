@@ -7,6 +7,7 @@ from PySide6.QtGui import QKeyEvent, QTextCursor
 from PySide6.QtWidgets import QApplication
 
 from label_pad.canvas import (
+    EDITOR_STYLE,
     LabelCanvas,
     _InlineTextEditor,
     canvas_text_layout,
@@ -15,7 +16,9 @@ from label_pad.canvas import (
     hit_test_text_resize_handle,
     label_coordinates_from_widget,
     measured_text_box_size,
+    natural_text_box_auto_width,
     natural_text_box_height,
+    natural_text_box_minimum_width,
     preview_rect,
     text_object_bounds,
     text_object_hit_rect,
@@ -665,6 +668,7 @@ def test_resize_handle_drag_updates_size_without_moving_origin() -> None:
     assert resized_object.geometry.width == 60
     assert resized_object.geometry.height == 35
     assert resized_object.geometry.selected is True
+    assert resized_object.auto_size is False
     assert canvas._drag_state is None
     assert canvas._resize_state is not None
     assert move_event.accepted
@@ -703,10 +707,48 @@ def test_resize_handle_drag_enforces_minimum_size() -> None:
     assert isinstance(resized_object, TextObject)
     assert resized_object.geometry.x == 50
     assert resized_object.geometry.y == 30
-    assert resized_object.geometry.width == 12
+    assert resized_object.geometry.width == natural_text_box_minimum_width(
+        resized_object
+    )
     assert resized_object.geometry.height == natural_text_box_height(
         resized_object,
-        12,
+        resized_object.geometry.width,
+    )
+
+
+def test_resize_handle_drag_enforces_longest_word_minimum_width() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
+    document = LabelDocument(profile_name=profile.name)
+    document.add_object(
+        TextObject(
+            geometry=ObjectGeometry(
+                id="text",
+                x=50,
+                y=30,
+                width=120,
+                height=24,
+                selected=True,
+            ),
+            text="Short Supercalifragilistic",
+        )
+    )
+    canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
+
+    LabelCanvas.mousePressEvent(canvas, FakeMouseEvent(x=192, y=206))
+    LabelCanvas.mouseMoveEvent(canvas, FakeMouseEvent(x=20, y=120))
+
+    resized_object = document.find_by_id("text")
+    assert isinstance(resized_object, TextObject)
+    assert resized_object.geometry.width == natural_text_box_minimum_width(
+        resized_object
     )
 
 
@@ -741,10 +783,12 @@ def test_resize_narrower_increases_live_minimum_height_for_wrapped_text() -> Non
 
     resized_object = document.find_by_id("text")
     assert isinstance(resized_object, TextObject)
-    assert resized_object.geometry.width == 40
+    assert resized_object.geometry.width == natural_text_box_minimum_width(
+        resized_object
+    )
     assert resized_object.geometry.height == natural_text_box_height(
         resized_object,
-        40,
+        resized_object.geometry.width,
     )
 
 
@@ -1065,6 +1109,36 @@ def test_inline_editor_scrollbars_are_disabled() -> None:
     assert editor.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
 
 
+def test_inline_editor_style_keeps_selection_outline_visible() -> None:
+    assert "background: white" in EDITOR_STYLE
+    assert "color: black" in EDITOR_STYLE
+    assert "border: 1px solid #2f6fed" in EDITOR_STYLE
+
+
+def test_resize_text_editor_auto_grows_new_text_box_width_while_typing() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
+    document = LabelDocument(profile_name=profile.name)
+    text_object = document.create_text(50, 30)
+    canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
+    canvas._text_editor = FakeTextEditor("A much longer single line value")
+    canvas._editing_object_id = text_object.geometry.id
+
+    LabelCanvas._resize_text_editor(canvas)
+
+    assert canvas._text_editor.geometry is not None
+    assert canvas._text_editor.geometry.width() > measured_text_box_size(
+        text_object
+    )[0]
+
+
 def test_finish_text_edit_commits_editor_text() -> None:
     profile = LabelProfile(
         name="Wide",
@@ -1149,6 +1223,7 @@ def test_finish_text_edit_preserves_width_and_enforces_minimum_height() -> None:
                 selected=True,
             ),
             text="Old",
+            auto_size=False,
         )
     )
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
@@ -1161,6 +1236,78 @@ def test_finish_text_edit_preserves_width_and_enforces_minimum_height() -> None:
     assert document.objects[0].geometry.height == natural_text_box_height(
         document.objects[0],
         24,
+    )
+
+
+def test_finish_text_edit_auto_sized_text_grows_to_unwrapped_text_width() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
+    document = LabelDocument(profile_name=profile.name)
+    document.add_object(
+        TextObject(
+            geometry=ObjectGeometry(id="text", x=50, y=30, selected=True),
+            text="Text",
+        )
+    )
+    canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
+    canvas._text_editor = FakeTextEditor("A much longer single line value")
+    canvas._editing_object_id = "text"
+
+    LabelCanvas._finish_text_edit(canvas, commit=True)
+
+    updated_object = document.objects[0]
+    assert updated_object.geometry.width == natural_text_box_auto_width(
+        updated_object
+    )
+    assert updated_object.geometry.height == natural_text_box_height(
+        updated_object,
+        updated_object.geometry.width,
+    )
+
+
+def test_resized_text_box_wraps_at_user_width_after_edit() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
+    document = LabelDocument(profile_name=profile.name)
+    document.add_object(
+        TextObject(
+            geometry=ObjectGeometry(
+                id="text",
+                x=50,
+                y=30,
+                width=50,
+                height=18,
+                selected=True,
+            ),
+            text="Old",
+            auto_size=False,
+        )
+    )
+    canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
+    canvas._text_editor = FakeTextEditor("Alpha Beta Gamma")
+    canvas._editing_object_id = "text"
+
+    LabelCanvas._finish_text_edit(canvas, commit=True)
+
+    updated_object = document.objects[0]
+    assert updated_object.geometry.width == 50
+    assert updated_object.geometry.height == natural_text_box_height(
+        updated_object,
+        50,
     )
 
 
@@ -1467,9 +1614,13 @@ class FakeTextEditor:
     def __init__(self, text: str) -> None:
         self._text = text
         self.deleted = False
+        self.geometry = None
 
     def text(self) -> str:
         return self._text
+
+    def setGeometry(self, geometry) -> None:  # noqa: N802
+        self.geometry = geometry
 
     def deleteLater(self) -> None:  # noqa: N802
         self.deleted = True
