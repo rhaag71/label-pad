@@ -121,7 +121,34 @@ def test_export_pdf_with_text_document_contains_visible_text_content(tmp_path) -
     content = b"\n".join(_decoded_streams(output_path.read_bytes()))
 
     assert b"0 0 0 rg" in content
-    assert b"1 0 0 1 10 38 cm" in content
+    assert b"1 0 0 1 9 39 cm" in content
+    assert b"/F1 14 Tf" in content
+    assert b"(Known Good) Tj" in content
+
+
+def test_export_pdf_falls_back_for_unsupported_font_family(tmp_path) -> None:
+    profile = LabelProfile(
+        name="Rollo 2 x 1",
+        page_width_mm=50.8,
+        page_height_mm=25.4,
+        label_width_mm=50.8,
+        label_height_mm=25.4,
+        columns=1,
+        rows=1,
+    )
+    document = LabelDocument(profile_name=profile.name)
+    document.add_object(
+        TextObject(
+            geometry=ObjectGeometry(x=8, y=18),
+            text="Known Good",
+            font_family="Annapurna SIL",
+        )
+    )
+
+    output_path = export_pdf(tmp_path / "labels.pdf", profile, document)
+    content = b"\n".join(_decoded_streams(output_path.read_bytes()))
+
+    assert document.objects[0].font_family == "Annapurna SIL"
     assert b"/F1 14 Tf" in content
     assert b"(Known Good) Tj" in content
 

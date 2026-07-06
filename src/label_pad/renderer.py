@@ -11,9 +11,10 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfgen.canvas import Canvas
 
 from label_pad.model import ImageObject, LabelDocument, TextObject
-
-TEXT_BOX_HORIZONTAL_PADDING = 2
-TEXT_BOX_VERTICAL_PADDING = 2
+from label_pad.text_layout import (
+    TEXT_BOX_HORIZONTAL_PADDING,
+    TEXT_BOX_VERTICAL_PADDING,
+)
 
 
 class RenderContext(ABC):
@@ -364,7 +365,13 @@ class Renderer:
 
 def _pdf_font_name(font_family: str, bold: bool, italic: bool) -> str:
     if font_family.lower() not in {"arial", "helvetica"}:
-        return font_family
+        if font_family in pdfmetrics.getRegisteredFontNames():
+            return font_family
+        return _helvetica_font_name(bold=bold, italic=italic)
+    return _helvetica_font_name(bold=bold, italic=italic)
+
+
+def _helvetica_font_name(*, bold: bool, italic: bool) -> str:
     if bold and italic:
         return "Helvetica-BoldOblique"
     if bold:

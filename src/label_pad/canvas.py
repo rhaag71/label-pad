@@ -12,10 +12,12 @@ from PySide6.QtWidgets import QFrame, QTextEdit, QWidget
 from label_pad.model import DocumentObject, LabelDocument, ObjectGeometry, TextObject
 from label_pad.profiles import LabelProfile
 from label_pad.renderer import QtRenderContext, Renderer
+from label_pad.text_layout import (
+    TEXT_BOX_HORIZONTAL_PADDING,
+    TEXT_BOX_VERTICAL_PADDING,
+)
 
 POINTS_PER_MM = 72 / 25.4
-TEXT_BOX_HORIZONTAL_PADDING = 2
-TEXT_BOX_VERTICAL_PADDING = 2
 TEXT_BOX_HIT_SLOP = 4
 RESIZE_HANDLE_SIZE = 6
 RESIZE_HANDLE_HIT_SLOP = 3

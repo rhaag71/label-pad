@@ -177,6 +177,25 @@ def test_pdf_render_context_converts_text_top_left_y_to_pdf_baseline() -> None:
     assert ("drawString", 0, 0, "Known Good") in pdf.calls
 
 
+def test_pdf_render_context_falls_back_for_unsupported_font_family() -> None:
+    pdf = RecordingPdfCanvas()
+    context = PdfRenderContext(pdf, page_height=72)
+
+    context.draw_text(
+        x=8,
+        y=18,
+        text="Known Good",
+        font_family="Annapurna SIL",
+        font_size=12,
+        bold=True,
+        italic=True,
+        underline=False,
+    )
+
+    assert ("setFont", "Helvetica-BoldOblique", 12) in pdf.calls
+    assert ("drawString", 0, 0, "Known Good") in pdf.calls
+
+
 def test_pdf_render_context_wraps_text_inside_box() -> None:
     pdf = RecordingPdfCanvas()
     context = PdfRenderContext(pdf, page_height=72)
@@ -197,8 +216,8 @@ def test_pdf_render_context_wraps_text_inside_box() -> None:
 
     assert ("translate", 8, 54) in pdf.calls
     assert ("setFont", "Helvetica", 12) in pdf.calls
-    assert ("drawString", TEXT_BOX_HORIZONTAL_PADDING, -14, "Known") in pdf.calls
-    assert ("drawString", TEXT_BOX_HORIZONTAL_PADDING, -28.4, "Good") in pdf.calls
+    assert ("drawString", TEXT_BOX_HORIZONTAL_PADDING, -13, "Known") in pdf.calls
+    assert ("drawString", TEXT_BOX_HORIZONTAL_PADDING, -27.4, "Good") in pdf.calls
 
 
 def test_pdf_render_context_renders_text_black() -> None:
@@ -282,8 +301,8 @@ def test_pdf_render_context_preserves_explicit_newlines_when_wrapping() -> None:
         wrap=True,
     )
 
-    assert ("drawString", TEXT_BOX_HORIZONTAL_PADDING, -14, "Alpha") in pdf.calls
-    assert ("drawString", TEXT_BOX_HORIZONTAL_PADDING, -28.4, "Beta Gamma") in pdf.calls
+    assert ("drawString", TEXT_BOX_HORIZONTAL_PADDING, -13, "Alpha") in pdf.calls
+    assert ("drawString", TEXT_BOX_HORIZONTAL_PADDING, -27.4, "Beta Gamma") in pdf.calls
 
 
 def test_pdf_render_context_converts_image_top_left_y_to_pdf_bottom_left() -> None:
