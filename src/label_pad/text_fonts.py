@@ -33,13 +33,8 @@ def qt_point_size_for_document_points(
     *,
     scale: float = 1,
 ) -> float:
-<<<<<<< HEAD
     """Convert document points to a screen Qt point size for the current view."""
     return max(1, font_size)
-=======
-    """Convert document points to a Qt point size for the current view scale."""
-    return max(1, font_size * scale)
->>>>>>> 41be50125f4172193ad7e3eeb46cff9c19281812
 
 
 def _editor_font(text_object: TextObject, *, font_size: float) -> QFont:

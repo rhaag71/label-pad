@@ -97,11 +97,7 @@ class QtRenderContext(RenderContext):
         self._painter.translate(x, y)
         self._painter.rotate(rotation)
         font = QFont(font_family)
-<<<<<<< HEAD
         font.setPointSizeF(max(1, font_size * self._font_scale))
-=======
-        font.setPointSizeF(font_size)
->>>>>>> 41be50125f4172193ad7e3eeb46cff9c19281812
         font.setBold(bold)
         font.setItalic(italic)
         font.setUnderline(underline)
