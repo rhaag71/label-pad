@@ -33,6 +33,7 @@ from label_pad.canvas import (
 )
 from label_pad.model import LabelDocument, ObjectGeometry, TextObject
 from label_pad.profiles import LabelProfile
+from label_pad.text_fonts import qt_point_size_for_document_points
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -350,7 +351,10 @@ def test_editor_font_helpers_do_not_recurse() -> None:
     scaled_font = editor_font_for_text_object_at_scale(text_object, scale=2)
 
     assert unscaled_font.pointSizeF() == 14
-    assert scaled_font.pointSizeF() == 28
+    assert scaled_font.pointSizeF() == qt_point_size_for_document_points(
+        14,
+        scale=2,
+    )
 
 
 def test_editor_font_at_scale_preserves_text_object_style() -> None:
@@ -366,7 +370,7 @@ def test_editor_font_at_scale_preserves_text_object_style() -> None:
     font = editor_font_for_text_object_at_scale(text_object, scale=3)
 
     assert font.family() == "Courier New"
-    assert font.pointSizeF() == 42
+    assert font.pointSizeF() == qt_point_size_for_document_points(14, scale=3)
     assert font.bold() is False
     assert font.italic() is True
     assert font.underline() is True
@@ -388,7 +392,27 @@ def test_editor_scaled_font_matches_preview_render_scale() -> None:
     editor_font = editor_font_for_text_object_at_scale(text_object, scale=scale)
 
     assert text_object.font_size == 14
-    assert editor_font.pointSizeF() == pytest.approx(14 * scale)
+    assert editor_font.pointSizeF() == pytest.approx(
+        qt_point_size_for_document_points(14, scale=scale)
+    )
+
+
+def test_editor_and_preview_effective_font_pixels_match() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
+    text_object = TextObject(text="Text", font_size=14)
+    scale = preview_scale(width=248, height=400, profile=profile)
+    renderer_font_size = qt_point_size_for_document_points(14)
+    editor_font = editor_font_for_text_object_at_scale(text_object, scale=scale)
+
+    assert editor_font.pointSizeF() == pytest.approx(renderer_font_size * scale)
 
 
 def test_hit_test_text_object_returns_topmost_matching_text() -> None:
@@ -1499,7 +1523,9 @@ def test_refresh_active_editor_applies_style_without_changing_geometry() -> None
 
     scale = preview_scale(width=248, height=400, profile=profile)
     assert canvas._text_editor.font.family() == "Courier New"
-    assert canvas._text_editor.font.pointSizeF() == pytest.approx(18 * scale)
+    assert canvas._text_editor.font.pointSizeF() == pytest.approx(
+        qt_point_size_for_document_points(18, scale=scale)
+    )
     assert canvas._text_editor.font.bold() is True
     assert canvas._text_editor.font.italic() is True
     assert canvas._text_editor.font.underline() is True
