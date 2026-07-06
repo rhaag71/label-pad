@@ -357,10 +357,17 @@ def test_editor_font_helpers_do_not_recurse() -> None:
     )
 
 
+<<<<<<< HEAD
 def test_qt_point_size_for_document_points_stays_screen_sized() -> None:
     assert qt_point_size_for_document_points(14, scale=1) == 14
     assert qt_point_size_for_document_points(14, scale=2) == 14
     assert qt_point_size_for_document_points(14, scale=0.5) == 14
+=======
+def test_qt_point_size_for_document_points_scales_linearly() -> None:
+    assert qt_point_size_for_document_points(14, scale=1) == 14
+    assert qt_point_size_for_document_points(14, scale=2) == 28
+    assert qt_point_size_for_document_points(14, scale=0.5) == 7
+>>>>>>> 41be50125f4172193ad7e3eeb46cff9c19281812
 
 
 def test_editor_font_at_scale_preserves_text_object_style() -> None:
@@ -415,7 +422,11 @@ def test_editor_and_preview_effective_font_pixels_match() -> None:
     )
     text_object = TextObject(text="Text", font_size=14)
     scale = preview_scale(width=248, height=400, profile=profile)
+<<<<<<< HEAD
     renderer_font_size = 14 / scale
+=======
+    renderer_font_size = 14
+>>>>>>> 41be50125f4172193ad7e3eeb46cff9c19281812
     editor_font = editor_font_for_text_object_at_scale(text_object, scale=scale)
 
     assert editor_font.pointSizeF() == pytest.approx(
