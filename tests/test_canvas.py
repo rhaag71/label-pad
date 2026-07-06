@@ -357,10 +357,10 @@ def test_editor_font_helpers_do_not_recurse() -> None:
     )
 
 
-def test_qt_point_size_for_document_points_scales_linearly() -> None:
+def test_qt_point_size_for_document_points_stays_screen_sized() -> None:
     assert qt_point_size_for_document_points(14, scale=1) == 14
-    assert qt_point_size_for_document_points(14, scale=2) == 28
-    assert qt_point_size_for_document_points(14, scale=0.5) == 7
+    assert qt_point_size_for_document_points(14, scale=2) == 14
+    assert qt_point_size_for_document_points(14, scale=0.5) == 14
 
 
 def test_editor_font_at_scale_preserves_text_object_style() -> None:
@@ -382,7 +382,7 @@ def test_editor_font_at_scale_preserves_text_object_style() -> None:
     assert font.underline() is True
 
 
-def test_editor_scaled_font_matches_preview_render_scale() -> None:
+def test_editor_scaled_font_matches_counter_scaled_preview_render() -> None:
     profile = LabelProfile(
         name="Wide",
         page_width_mm=100,
@@ -415,10 +415,12 @@ def test_editor_and_preview_effective_font_pixels_match() -> None:
     )
     text_object = TextObject(text="Text", font_size=14)
     scale = preview_scale(width=248, height=400, profile=profile)
-    renderer_font_size = 14
+    renderer_font_size = 14 / scale
     editor_font = editor_font_for_text_object_at_scale(text_object, scale=scale)
 
-    assert editor_font.pointSizeF() == pytest.approx(renderer_font_size * scale)
+    assert editor_font.pointSizeF() == pytest.approx(
+        renderer_font_size * scale
+    )
 
 
 def test_hit_test_text_object_returns_topmost_matching_text() -> None:

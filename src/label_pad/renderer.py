@@ -71,8 +71,9 @@ class RenderContext(ABC):
 class QtRenderContext(RenderContext):
     """Qt painter-backed render context."""
 
-    def __init__(self, painter: QPainter) -> None:
+    def __init__(self, painter: QPainter, *, font_scale: float = 1) -> None:
         self._painter = painter
+        self._font_scale = font_scale
 
     def draw_text(
         self,
@@ -96,7 +97,7 @@ class QtRenderContext(RenderContext):
         self._painter.translate(x, y)
         self._painter.rotate(rotation)
         font = QFont(font_family)
-        font.setPointSizeF(font_size)
+        font.setPointSizeF(max(1, font_size * self._font_scale))
         font.setBold(bold)
         font.setItalic(italic)
         font.setUnderline(underline)

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from label_pad.model import ImageObject, LabelDocument, ObjectGeometry, TextObject
 from label_pad.renderer import (
     TEXT_BOX_HORIZONTAL_PADDING,
@@ -138,6 +140,26 @@ def test_qt_render_context_applies_point_size_and_bold_flag() -> None:
     assert painter.font is not None
     assert painter.font.pointSizeF() == 14
     assert painter.font.bold() is False
+
+
+def test_qt_render_context_counter_scales_preview_font_size() -> None:
+    painter = RecordingQtPainter()
+    context = QtRenderContext(painter, font_scale=1 / 3)
+
+    context.draw_text(
+        x=0,
+        y=0,
+        text="Text",
+        font_family="Helvetica",
+        font_size=14,
+        bold=False,
+        italic=False,
+        underline=False,
+    )
+
+    assert painter.font is not None
+    assert painter.font.pointSizeF() == pytest.approx(14 / 3)
+    assert painter.font.pointSizeF() * 3 == pytest.approx(14)
 
 
 class RecordingPdfCanvas:

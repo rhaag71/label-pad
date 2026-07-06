@@ -17,7 +17,11 @@ def editor_font_for_text_object_at_scale(
     *,
     scale: float,
 ) -> QFont:
-    """Return the inline editor font scaled for the widget preview."""
+    """Return the inline editor font for the scaled widget preview.
+
+    Canvas rendering counter-scales fonts because QPainter already scales document
+    geometry. The editor is a QWidget, so it uses the same screen point size.
+    """
     return _editor_font(
         text_object,
         font_size=qt_point_size_for_document_points(text_object.font_size, scale=scale),
@@ -29,8 +33,8 @@ def qt_point_size_for_document_points(
     *,
     scale: float = 1,
 ) -> float:
-    """Convert document points to a Qt point size for the current view scale."""
-    return max(1, font_size * scale)
+    """Convert document points to a screen Qt point size for the current view."""
+    return max(1, font_size)
 
 
 def _editor_font(text_object: TextObject, *, font_size: float) -> QFont:

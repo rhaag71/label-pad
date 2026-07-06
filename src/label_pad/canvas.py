@@ -492,7 +492,10 @@ class LabelCanvas(QWidget):
             profile=self._profile,
         )
         painter.scale(scale, scale)
-        self._renderer.render(self._paint_document(), QtRenderContext(painter))
+        self._renderer.render(
+            self._paint_document(),
+            QtRenderContext(painter, font_scale=1 / scale),
+        )
         painter.setPen(QPen(Qt.GlobalColor.blue, 1, Qt.PenStyle.DashLine))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         for label_object in self._document.selected_objects():
@@ -619,4 +622,3 @@ def _resized_object_size(
         width,
         min(max(height, min_height), max_height),
     )
-
