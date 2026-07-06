@@ -353,6 +353,44 @@ def test_editor_font_helpers_do_not_recurse() -> None:
     assert scaled_font.pointSizeF() == 28
 
 
+def test_editor_font_at_scale_preserves_text_object_style() -> None:
+    text_object = TextObject(
+        text="Text",
+        font_family="Courier New",
+        font_size=14,
+        bold=False,
+        italic=True,
+        underline=True,
+    )
+
+    font = editor_font_for_text_object_at_scale(text_object, scale=3)
+
+    assert font.family() == "Courier New"
+    assert font.pointSizeF() == 42
+    assert font.bold() is False
+    assert font.italic() is True
+    assert font.underline() is True
+
+
+def test_editor_scaled_font_matches_preview_render_scale() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
+    text_object = TextObject(text="Text", font_size=14)
+    scale = preview_scale(width=248, height=400, profile=profile)
+
+    editor_font = editor_font_for_text_object_at_scale(text_object, scale=scale)
+
+    assert text_object.font_size == 14
+    assert editor_font.pointSizeF() == pytest.approx(14 * scale)
+
+
 def test_hit_test_text_object_returns_topmost_matching_text() -> None:
     document = LabelDocument(profile_name="Wide")
     first = document.add_object(
@@ -1504,6 +1542,44 @@ def test_finish_text_edit_commits_editor_text() -> None:
     assert canvas._text_editor is None
     assert canvas._editing_object_id is None
     assert canvas.update_count == 1
+
+
+def test_finish_text_edit_preserves_text_style_fields() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
+    document = LabelDocument(profile_name=profile.name)
+    document.add_object(
+        TextObject(
+            geometry=ObjectGeometry(id="text", x=50, y=30, selected=True),
+            text="Old",
+            font_family="Courier New",
+            font_size=14,
+            bold=False,
+            italic=True,
+            underline=True,
+        )
+    )
+    canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
+    canvas._text_editor = FakeTextEditor("New")
+    canvas._editing_object_id = "text"
+
+    LabelCanvas._finish_text_edit(canvas, commit=True)
+
+    text_object = document.objects[0]
+    assert isinstance(text_object, TextObject)
+    assert text_object.text == "New"
+    assert text_object.font_family == "Courier New"
+    assert text_object.font_size == 14
+    assert text_object.bold is False
+    assert text_object.italic is True
+    assert text_object.underline is True
 
 
 def test_finish_text_edit_preserves_explicit_newlines() -> None:

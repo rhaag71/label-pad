@@ -17,7 +17,7 @@ def editor_font_for_text_object_at_scale(
     *,
     scale: float,
 ) -> QFont:
-    """Return the inline editor font scaled to widget preview pixels."""
+    """Return the inline editor font scaled for the widget preview."""
     return _editor_font(text_object, font_size=max(1, text_object.font_size * scale))
 
 

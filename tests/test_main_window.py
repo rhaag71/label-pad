@@ -204,7 +204,7 @@ def test_format_toolbar_updates_document_defaults_without_selection() -> None:
 
 def test_format_toolbar_reflects_selected_text_object() -> None:
     document = LabelDocument(profile_name="Test")
-    document.add_object(
+    text_object = document.add_object(
         TextObject(
             geometry=ObjectGeometry(id="text", selected=True),
             font_family="Courier New",
@@ -220,6 +220,7 @@ def test_format_toolbar_reflects_selected_text_object() -> None:
 
     MainWindow._sync_format_toolbar(window)
 
+    assert document.objects[0] == text_object
     assert window._font_family_combo.current_family == "Courier New"
     assert window._font_size_spin.current_value == 20
     assert window._bold_button.checked is True
@@ -240,10 +241,12 @@ def test_format_toolbar_reflects_document_defaults_without_selection() -> None:
         wrap=False,
         alignment="center",
     )
+    defaults = document.defaults
     window = _format_window(document=document, canvas=FakeCanvas())
 
     MainWindow._sync_format_toolbar(window)
 
+    assert document.defaults == defaults
     assert window._font_family_combo.current_family == "Arial"
     assert window._font_size_spin.current_value == 16
     assert window._bold_button.checked is True

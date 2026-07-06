@@ -5,6 +5,7 @@ from label_pad.renderer import (
     TEXT_BOX_HORIZONTAL_PADDING,
     TEXT_BOX_VERTICAL_PADDING,
     PdfRenderContext,
+    QtRenderContext,
     Renderer,
 )
 
@@ -21,6 +22,32 @@ class RecordingRenderContext:
 
     def draw_rectangle(self, **kwargs) -> None:
         self.calls.append(("rectangle", kwargs))
+
+
+class RecordingQtPainter:
+    def __init__(self) -> None:
+        self.font = None
+
+    def save(self) -> None:
+        return
+
+    def translate(self, x, y) -> None:
+        return
+
+    def rotate(self, rotation) -> None:
+        return
+
+    def setFont(self, font) -> None:  # noqa: N802
+        self.font = font
+
+    def setPen(self, pen) -> None:  # noqa: N802
+        return
+
+    def drawText(self, *args) -> None:  # noqa: N802
+        return
+
+    def restore(self) -> None:
+        return
 
 
 def test_renderer_draws_document_objects_in_order() -> None:
@@ -91,6 +118,26 @@ def test_renderer_ignores_empty_documents() -> None:
     Renderer().render(LabelDocument(profile_name="4 x 6 Shipping Label"), context)
 
     assert context.calls == []
+
+
+def test_qt_render_context_applies_point_size_and_bold_flag() -> None:
+    painter = RecordingQtPainter()
+    context = QtRenderContext(painter)
+
+    context.draw_text(
+        x=0,
+        y=0,
+        text="Text",
+        font_family="Helvetica",
+        font_size=14,
+        bold=False,
+        italic=False,
+        underline=False,
+    )
+
+    assert painter.font is not None
+    assert painter.font.pointSizeF() == 14
+    assert painter.font.bold() is False
 
 
 class RecordingPdfCanvas:
