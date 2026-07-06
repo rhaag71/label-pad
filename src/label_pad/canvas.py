@@ -3,206 +3,60 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from math import ceil, floor
 
-from PySide6.QtCore import QRect, QRectF, Qt
-from PySide6.QtGui import QFont, QFontMetricsF, QPainter, QPen
-from PySide6.QtWidgets import QFrame, QTextEdit, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPainter, QPen
+from PySide6.QtWidgets import QWidget
 
-from label_pad.model import DocumentObject, LabelDocument, ObjectGeometry, TextObject
+from label_pad.canvas_editor import EDITOR_STYLE, InlineTextEditor
+from label_pad.canvas_geometry import (
+    clamped_label_coordinates_from_widget,
+    label_coordinates_from_widget,
+    label_size_points,
+    preview_rect,
+    preview_scale,
+)
+from label_pad.canvas_hit_testing import (
+    hit_test_text_object,
+    hit_test_text_resize_handle,
+    text_object_hit_rect,
+    text_object_resize_handle_rect,
+)
+from label_pad.canvas_objects import (
+    move_document_object,
+    resize_document_object,
+    select_document_object,
+    update_text_object,
+)
+from label_pad.model import LabelDocument, ObjectGeometry, TextObject
 from label_pad.profiles import LabelProfile
 from label_pad.renderer import QtRenderContext, Renderer
+from label_pad.text_fonts import (
+    editor_font_for_text_object,
+    editor_font_for_text_object_at_scale,
+)
 from label_pad.text_layout import (
+    MIN_TEXT_BOX_HEIGHT,
+    MIN_TEXT_BOX_WIDTH,
     TEXT_BOX_HORIZONTAL_PADDING,
     TEXT_BOX_VERTICAL_PADDING,
+    canvas_text_layout,
+    measured_text_box_size,
+    natural_text_box_auto_width,
+    natural_text_box_height,
+    natural_text_box_minimum_width,
+    text_object_bounds,
+    with_live_editor_text_box,
 )
 
-POINTS_PER_MM = 72 / 25.4
-TEXT_BOX_HIT_SLOP = 4
-RESIZE_HANDLE_SIZE = 6
-RESIZE_HANDLE_HIT_SLOP = 3
-MIN_TEXT_BOX_WIDTH = 24
-MIN_TEXT_BOX_HEIGHT = 10
-MIN_EDITOR_WIDTH = 48
-EDITOR_STYLE = """
-QTextEdit {
-    background: white;
-    color: black;
-    border: 1px solid #2f6fed;
-    margin: 0;
-    padding: 0;
-    selection-background-color: #cfe3ff;
-    selection-color: black;
-}
-"""
+_InlineTextEditor = InlineTextEditor
 
-
-def preview_rect(
-    *,
-    width: int,
-    height: int,
-    profile: LabelProfile,
-    margin: int = 24,
-) -> QRect:
-    """Return the centered label preview rectangle for the widget size."""
-    available_width = max(1, width - margin * 2)
-    available_height = max(1, height - margin * 2)
-    aspect = profile.label_width_mm / profile.label_height_mm
-
-    canvas_width = available_width
-    canvas_height = int(canvas_width / aspect)
-    if canvas_height > available_height:
-        canvas_height = available_height
-        canvas_width = int(canvas_height * aspect)
-
-    x = (width - canvas_width) // 2
-    y = (height - canvas_height) // 2
-    return QRect(x, y, canvas_width, canvas_height)
-
-
-def label_size_points(profile: LabelProfile) -> tuple[float, float]:
-    """Return label document size in PDF points."""
-    return (
-        profile.label_width_mm * POINTS_PER_MM,
-        profile.label_height_mm * POINTS_PER_MM,
-    )
-
-
-def preview_scale(
-    *,
-    width: int,
-    height: int,
-    profile: LabelProfile,
-    margin: int = 24,
-) -> float:
-    """Return widget-pixel scale for one document point in the preview."""
-    label_rect = preview_rect(
-        width=width,
-        height=height,
-        profile=profile,
-        margin=margin,
-    )
-    label_width, label_height = label_size_points(profile)
-    return min(label_rect.width() / label_width, label_rect.height() / label_height)
-
-
-def label_coordinates_from_widget(
-    *,
-    widget_x: float,
-    widget_y: float,
-    width: int,
-    height: int,
-    profile: LabelProfile,
-    margin: int = 24,
-) -> tuple[float, float] | None:
-    """Return label-local coordinates for a widget point inside the preview."""
-    label_rect = preview_rect(
-        width=width,
-        height=height,
-        profile=profile,
-        margin=margin,
-    )
-    if not label_rect.contains(int(widget_x), int(widget_y)):
-        return None
-    scale = preview_scale(
-        width=width,
-        height=height,
-        profile=profile,
-        margin=margin,
-    )
-    return (
-        (widget_x - label_rect.x()) / scale,
-        (widget_y - label_rect.y()) / scale,
-    )
-
-
-def clamped_label_coordinates_from_widget(
-    *,
-    widget_x: float,
-    widget_y: float,
-    width: int,
-    height: int,
-    profile: LabelProfile,
-    margin: int = 24,
-) -> tuple[float, float]:
-    """Return label-local coordinates clamped to the visible preview."""
-    label_rect = preview_rect(
-        width=width,
-        height=height,
-        profile=profile,
-        margin=margin,
-    )
-    scale = preview_scale(
-        width=width,
-        height=height,
-        profile=profile,
-        margin=margin,
-    )
-    label_width, label_height = label_size_points(profile)
-    return (
-        min(max((widget_x - label_rect.x()) / scale, 0), label_width),
-        min(max((widget_y - label_rect.y()) / scale, 0), label_height),
-    )
-
-
-@dataclass(frozen=True)
-class CanvasTextLayout:
-    """Canvas-side text box metrics shared by hit testing, selection, and editing."""
-
-    text_object: TextObject
-    font: QFont
-    box_rect: QRectF
-
-    def editor_rect(self, label_rect: QRect, scale: float) -> QRect:
-        """Return an absolute editor rectangle clamped inside the label preview."""
-        label_left = label_rect.x()
-        label_top = label_rect.y()
-        label_right = label_rect.x() + label_rect.width()
-        label_bottom = label_rect.y() + label_rect.height()
-
-        left = min(
-            max(floor(label_left + self.box_rect.x() * scale), label_left),
-            max(label_left, label_right - 1),
-        )
-        top = min(
-            max(floor(label_top + self.box_rect.y() * scale), label_top),
-            max(label_top, label_bottom - 1),
-        )
-        desired_width = max(MIN_EDITOR_WIDTH, ceil(self.box_rect.width() * scale))
-        desired_height = max(
-            1,
-            ceil(self.box_rect.height() * scale),
-            ceil(
-                natural_text_box_height(
-                    self.text_object,
-                    self.box_rect.width(),
-                )
-                * scale
-            ),
-        )
-        width = min(desired_width, max(1, label_right - left))
-        height = min(desired_height, max(1, label_bottom - top))
-        return QRect(left, top, width, height)
-
-
-def editor_font_for_text_object(text_object: TextObject) -> QFont:
-    """Return the inline editor font matching the rendered text style."""
-    return editor_font_for_text_object_at_scale(text_object, scale=1)
-
-
-def editor_font_for_text_object_at_scale(
-    text_object: TextObject,
-    *,
-    scale: float,
-) -> QFont:
-    """Return the inline editor font scaled to widget preview pixels."""
-    font = QFont(text_object.font_family)
-    font.setPointSizeF(max(1, text_object.font_size * scale))
-    font.setBold(text_object.bold)
-    font.setItalic(text_object.italic)
-    font.setUnderline(text_object.underline)
-    return font
-
+_HELPER_REEXPORTS = (
+    TEXT_BOX_HORIZONTAL_PADDING,
+    TEXT_BOX_VERTICAL_PADDING,
+    text_object_bounds,
+    text_object_hit_rect,
+)
 
 @dataclass(frozen=True)
 class DragState:
@@ -230,225 +84,6 @@ class ResizeState:
     object_y: float
 
 
-def measured_text_box_size(text_object: TextObject) -> tuple[float, float]:
-    """Return a sane padded box size for text using the canvas render font."""
-    return (
-        natural_text_box_auto_width(text_object),
-        natural_text_box_height(
-            text_object,
-            natural_text_box_auto_width(text_object),
-        ),
-    )
-
-
-def natural_text_box_auto_width(
-    text_object: TextObject,
-    max_width: float | None = None,
-) -> float:
-    """Return the unwrapped width needed for explicit text lines."""
-    font = editor_font_for_text_object(text_object)
-    metrics = QFontMetricsF(font)
-    text_width = max(
-        metrics.horizontalAdvance(line or " ")
-        for line in (text_object.text or " ").split("\n")
-    )
-    width = text_width + TEXT_BOX_HORIZONTAL_PADDING * 2
-    if max_width is not None:
-        width = min(width, max(1, max_width))
-    return width
-
-
-def natural_text_box_minimum_width(text_object: TextObject) -> float:
-    """Return the minimum width that avoids breaking unbreakable words."""
-    font = editor_font_for_text_object(text_object)
-    metrics = QFontMetricsF(font)
-    words = [
-        word
-        for line in (text_object.text or " ").split("\n")
-        for word in line.split()
-    ]
-    text_width = max(
-        [metrics.horizontalAdvance(word) for word in words]
-        + [metrics.horizontalAdvance(" ")]
-    )
-    return max(MIN_TEXT_BOX_WIDTH, text_width + TEXT_BOX_HORIZONTAL_PADDING * 2)
-
-
-def natural_text_box_height(text_object: TextObject, width: float) -> float:
-    """Return the content-aware minimum box height for current text/font/wrap."""
-    font = editor_font_for_text_object(text_object)
-    metrics = QFontMetricsF(font)
-    inner_width = max(1, width - TEXT_BOX_HORIZONTAL_PADDING * 2)
-    line_count = len(
-        _wrapped_canvas_lines(
-            text=text_object.text or " ",
-            metrics=metrics,
-            width=inner_width,
-            wrap=text_object.wrap,
-        )
-    )
-    return line_count * metrics.lineSpacing() + TEXT_BOX_VERTICAL_PADDING * 2
-
-
-def canvas_text_layout(text_object: TextObject) -> CanvasTextLayout:
-    """Return canvas text box layout backed by object geometry."""
-    font = editor_font_for_text_object(text_object)
-    width = text_object.geometry.width
-    height = text_object.geometry.height
-    if width <= 0 or height <= 0:
-        width, height = measured_text_box_size(text_object)
-    box_rect = QRectF(
-        text_object.geometry.x,
-        text_object.geometry.y,
-        width,
-        height,
-    )
-    return CanvasTextLayout(
-        text_object=text_object,
-        font=font,
-        box_rect=box_rect,
-    )
-
-
-def text_object_bounds(text_object: TextObject) -> tuple[float, float, float, float]:
-    """Return the shared padded text box bounds in label coordinates."""
-    rect = canvas_text_layout(text_object).box_rect
-    return (rect.x(), rect.y(), rect.width(), rect.height())
-
-
-def text_object_hit_rect(text_object: TextObject) -> QRectF:
-    """Return the forgiving interaction bounds without changing visible geometry."""
-    return canvas_text_layout(text_object).box_rect.adjusted(
-        -TEXT_BOX_HIT_SLOP,
-        -TEXT_BOX_HIT_SLOP,
-        TEXT_BOX_HIT_SLOP,
-        TEXT_BOX_HIT_SLOP,
-    )
-
-
-def text_object_resize_handle_rect(text_object: TextObject) -> QRectF:
-    """Return the visible bottom-right resize handle for a text object."""
-    box_rect = canvas_text_layout(text_object).box_rect
-    return QRectF(
-        box_rect.right() - RESIZE_HANDLE_SIZE,
-        box_rect.bottom() - RESIZE_HANDLE_SIZE,
-        RESIZE_HANDLE_SIZE,
-        RESIZE_HANDLE_SIZE,
-    )
-
-
-def text_object_resize_handle_hit_rect(text_object: TextObject) -> QRectF:
-    """Return the forgiving hit bounds for the visible resize handle."""
-    return text_object_resize_handle_rect(text_object).adjusted(
-        -RESIZE_HANDLE_HIT_SLOP,
-        -RESIZE_HANDLE_HIT_SLOP,
-        RESIZE_HANDLE_HIT_SLOP,
-        RESIZE_HANDLE_HIT_SLOP,
-    )
-
-
-def hit_test_text_resize_handle(
-    document: LabelDocument,
-    *,
-    x: float,
-    y: float,
-) -> TextObject | None:
-    """Return the topmost selected text object whose resize handle contains a point."""
-    for label_object in reversed(document.selected_objects()):
-        if not isinstance(label_object, TextObject):
-            continue
-        if text_object_resize_handle_hit_rect(label_object).contains(x, y):
-            return label_object
-    return None
-
-
-def hit_test_text_object(
-    document: LabelDocument,
-    *,
-    x: float,
-    y: float,
-) -> TextObject | None:
-    """Return the topmost text object whose estimated bounds contain a point."""
-    for label_object in reversed(document.objects):
-        if not isinstance(label_object, TextObject):
-            continue
-        if text_object_hit_rect(label_object).contains(x, y):
-            return label_object
-    return None
-
-
-def select_document_object(document: LabelDocument, object_id: str | None) -> None:
-    """Set box selection to one object by id, or clear box selection."""
-    document.objects = [
-        _with_selected(label_object, label_object.geometry.id == object_id)
-        for label_object in document.objects
-    ]
-
-
-def update_text_object(
-    document: LabelDocument,
-    object_id: str,
-    text: str,
-    width: float | None = None,
-    height: float | None = None,
-) -> TextObject | None:
-    """Replace a text object's content and return the updated object."""
-    for index, label_object in enumerate(document.objects):
-        if label_object.geometry.id != object_id:
-            continue
-        if not isinstance(label_object, TextObject):
-            return None
-        geometry = label_object.geometry
-        if width is not None and height is not None:
-            geometry = replace(geometry, width=width, height=height)
-        updated_object = replace(label_object, geometry=geometry, text=text)
-        document.objects[index] = updated_object
-        return updated_object
-    return None
-
-
-def move_document_object(
-    document: LabelDocument,
-    object_id: str,
-    *,
-    x: float,
-    y: float,
-) -> DocumentObject | None:
-    """Move a document object by updating shared geometry position."""
-    for index, label_object in enumerate(document.objects):
-        if label_object.geometry.id != object_id:
-            continue
-        updated_object = replace(
-            label_object,
-            geometry=replace(label_object.geometry, x=x, y=y),
-        )
-        document.objects[index] = updated_object
-        return updated_object
-    return None
-
-
-def resize_document_object(
-    document: LabelDocument,
-    object_id: str,
-    *,
-    width: float,
-    height: float,
-) -> DocumentObject | None:
-    """Resize a document object by updating shared geometry size."""
-    for index, label_object in enumerate(document.objects):
-        if label_object.geometry.id != object_id:
-            continue
-        if isinstance(label_object, TextObject):
-            label_object = replace(label_object, auto_size=False)
-        updated_object = replace(
-            label_object,
-            geometry=replace(label_object.geometry, width=width, height=height),
-        )
-        document.objects[index] = updated_object
-        return updated_object
-    return None
-
-
 class LabelCanvas(QWidget):
     """White preview surface with box selection and inline text editing.
 
@@ -472,6 +107,7 @@ class LabelCanvas(QWidget):
         self._text_editor = None
         self._editing_object_id = None
         self._editing_created_object_id = None
+        self._resizing_text_editor = False
         self._drag_state = None
         self._resize_state = None
         self.setMinimumSize(320, 220)
@@ -690,7 +326,7 @@ class LabelCanvas(QWidget):
         self._editing_created_object_id = (
             text_object.geometry.id if created else None
         )
-        self._text_editor = _InlineTextEditor(self._cancel_text_edit, self)
+        self._text_editor = InlineTextEditor(self._cancel_text_edit, self)
         self._text_editor.set_commit_callback(
             lambda: self._finish_text_edit(commit=True)
         )
@@ -742,40 +378,46 @@ class LabelCanvas(QWidget):
         self._resize_text_editor()
 
     def _resize_text_editor(self) -> None:
+        if getattr(self, "_resizing_text_editor", False):
+            return
         editor = self._text_editor
         object_id = self._editing_object_id
         if editor is None or object_id is None:
             return
-        label_object = self._document.find_by_id(object_id)
-        if not isinstance(label_object, TextObject):
-            return
-        label_rect = preview_rect(
-            width=self.width(),
-            height=self.height(),
-            profile=self._profile,
-        )
-        scale = preview_scale(
-            width=self.width(),
-            height=self.height(),
-            profile=self._profile,
-        )
-        label_width, _ = label_size_points(self._profile)
-        max_width = max(1, label_width - label_object.geometry.x)
-        editor.setAlignment(
-            _qt_text_alignment(label_object.alignment)
-            | Qt.AlignmentFlag.AlignVCenter
-        )
-        editor.setFont(
-            editor_font_for_text_object_at_scale(label_object, scale=scale)
-        )
-        editor.setGeometry(
-            canvas_text_layout(
-                _with_live_editor_text_box(
-                    replace(label_object, text=editor.text()),
-                    max_width=max_width,
-                )
-            ).editor_rect(label_rect, scale)
-        )
+        self._resizing_text_editor = True
+        try:
+            label_object = self._document.find_by_id(object_id)
+            if not isinstance(label_object, TextObject):
+                return
+            label_rect = preview_rect(
+                width=self.width(),
+                height=self.height(),
+                profile=self._profile,
+            )
+            scale = preview_scale(
+                width=self.width(),
+                height=self.height(),
+                profile=self._profile,
+            )
+            label_width, _ = label_size_points(self._profile)
+            max_width = max(1, label_width - label_object.geometry.x)
+            editor.setAlignment(
+                _qt_text_alignment(label_object.alignment)
+                | Qt.AlignmentFlag.AlignVCenter
+            )
+            editor.setFont(
+                editor_font_for_text_object_at_scale(label_object, scale=scale)
+            )
+            editor.setGeometry(
+                canvas_text_layout(
+                    with_live_editor_text_box(
+                        replace(label_object, text=editor.text()),
+                        max_width=max_width,
+                    )
+                ).editor_rect(label_rect, scale)
+            )
+        finally:
+            self._resizing_text_editor = False
 
     def _cancel_text_edit(self) -> None:
         self._finish_text_edit(commit=False)
@@ -850,7 +492,7 @@ class LabelCanvas(QWidget):
             profile=self._profile,
         )
         painter.scale(scale, scale)
-        self._renderer.render(self._document, QtRenderContext(painter))
+        self._renderer.render(self._paint_document(), QtRenderContext(painter))
         painter.setPen(QPen(Qt.GlobalColor.blue, 1, Qt.PenStyle.DashLine))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         for label_object in self._document.selected_objects():
@@ -864,14 +506,19 @@ class LabelCanvas(QWidget):
             painter.drawRect(text_object_resize_handle_rect(label_object))
         painter.restore()
 
-
-def _with_selected(label_object: DocumentObject, selected: bool) -> DocumentObject:
-    if label_object.geometry.selected is selected:
-        return label_object
-    return replace(
-        label_object,
-        geometry=replace(label_object.geometry, selected=selected),
-    )
+    def _paint_document(self) -> LabelDocument:
+        """Return the canvas document view while inline editing is active."""
+        if self._editing_object_id is None:
+            return self._document
+        return LabelDocument(
+            profile_name=self._document.profile_name,
+            objects=[
+                label_object
+                for label_object in self._document.objects
+                if label_object.geometry.id != self._editing_object_id
+            ],
+            defaults=self._document.defaults,
+        )
 
 
 def _new_text_box_size(document: LabelDocument) -> tuple[float, float]:
@@ -973,130 +620,3 @@ def _resized_object_size(
         min(max(height, min_height), max_height),
     )
 
-
-def _with_measured_text_box(text_object: TextObject) -> TextObject:
-    width, height = measured_text_box_size(text_object)
-    if text_object.geometry.height > 0:
-        height = text_object.geometry.height
-    return replace(
-        text_object,
-        geometry=replace(text_object.geometry, width=width, height=height),
-    )
-
-
-def _with_live_editor_text_box(
-    text_object: TextObject,
-    *,
-    max_width: float | None = None,
-) -> TextObject:
-    if text_object.auto_size:
-        width = natural_text_box_auto_width(text_object, max_width=max_width)
-        height = natural_text_box_height(text_object, width)
-        return replace(
-            text_object,
-            geometry=replace(text_object.geometry, width=width, height=height),
-        )
-    return _with_minimum_text_box_height(text_object)
-
-
-def _with_minimum_text_box_height(text_object: TextObject) -> TextObject:
-    width = text_object.geometry.width
-    if width <= 0:
-        width, _ = measured_text_box_size(text_object)
-    height = max(
-        text_object.geometry.height,
-        natural_text_box_height(text_object, width),
-    )
-    return replace(
-        text_object,
-        geometry=replace(text_object.geometry, width=width, height=height),
-    )
-
-
-def _wrapped_canvas_lines(
-    *,
-    text: str,
-    metrics: QFontMetricsF,
-    width: float,
-    wrap: bool,
-) -> list[str]:
-    lines: list[str] = []
-    paragraphs = text.split("\n") or [""]
-    for paragraph in paragraphs:
-        if not wrap:
-            lines.append(paragraph)
-            continue
-        if paragraph == "":
-            lines.append("")
-            continue
-        current = ""
-        for word in paragraph.split(" "):
-            candidate = word if current == "" else f"{current} {word}"
-            if metrics.horizontalAdvance(candidate) <= width:
-                current = candidate
-                continue
-            if current:
-                lines.append(current)
-            current = _fit_canvas_word(word, metrics, width, lines)
-        lines.append(current)
-    return lines
-
-
-def _fit_canvas_word(
-    word: str,
-    metrics: QFontMetricsF,
-    width: float,
-    lines: list[str],
-) -> str:
-    current = ""
-    for character in word:
-        candidate = current + character
-        if current and metrics.horizontalAdvance(candidate) > width:
-            lines.append(current)
-            current = character
-        else:
-            current = candidate
-    return current
-
-
-class _InlineTextEditor(QTextEdit):
-    def __init__(self, cancel_callback, parent: QWidget) -> None:
-        super().__init__(parent)
-        self._cancel_callback = cancel_callback
-        self._commit_callback = None
-        self._finished = False
-        self.setAcceptRichText(False)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-
-    def set_commit_callback(self, commit_callback) -> None:
-        self._commit_callback = commit_callback
-
-    def setFrame(self, enabled: bool) -> None:  # noqa: N802
-        shape = QFrame.Shape.StyledPanel if enabled else QFrame.Shape.NoFrame
-        self.setFrameShape(shape)
-
-    def setTextMargins(self, left: int, top: int, right: int, bottom: int) -> None:  # noqa: N802, ARG002
-        self.document().setDocumentMargin(0)
-
-    def setText(self, text: str) -> None:  # noqa: N802
-        self.setPlainText(text)
-
-    def text(self) -> str:
-        return self.toPlainText()
-
-    def keyPressEvent(self, event) -> None:  # noqa: N802
-        if event.key() == Qt.Key.Key_Escape:
-            self._finished = True
-            self._cancel_callback()
-            event.accept()
-            return
-        super().keyPressEvent(event)
-
-    def focusOutEvent(self, event) -> None:  # noqa: N802
-        super().focusOutEvent(event)
-        if self._finished:
-            return
-        self._finished = True
-        if self._commit_callback is not None:
-            self._commit_callback()

@@ -15,6 +15,7 @@ from label_pad.canvas import (
     _InlineTextEditor,
     canvas_text_layout,
     editor_font_for_text_object,
+    editor_font_for_text_object_at_scale,
     hit_test_text_object,
     hit_test_text_resize_handle,
     label_coordinates_from_widget,
@@ -340,6 +341,16 @@ def test_editor_font_matches_text_object_style() -> None:
     assert font.pointSizeF() == 18.5
     assert font.bold() is True
     assert font.italic() is True
+
+
+def test_editor_font_helpers_do_not_recurse() -> None:
+    text_object = TextObject(text="Text", font_size=14)
+
+    unscaled_font = editor_font_for_text_object(text_object)
+    scaled_font = editor_font_for_text_object_at_scale(text_object, scale=2)
+
+    assert unscaled_font.pointSizeF() == 14
+    assert scaled_font.pointSizeF() == 28
 
 
 def test_hit_test_text_object_returns_topmost_matching_text() -> None:
@@ -1329,6 +1340,86 @@ def test_resize_text_editor_auto_grows_new_text_box_width_while_typing() -> None
         text_object
     )[0]
     assert canvas._text_editor.geometry.right() <= 224
+
+
+def test_resize_text_editor_does_not_recurse_while_typing() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
+    document = LabelDocument(profile_name=profile.name)
+    text_object = document.create_text(50, 30)
+    canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
+    canvas._text_editor = FakeTextEditor("")
+    canvas._editing_object_id = text_object.geometry.id
+
+    for text in ("A", "Ab", "Abc", "Abcd"):
+        canvas._text_editor._text = text
+        LabelCanvas._resize_text_editor(canvas)
+
+    assert canvas._text_editor.geometry is not None
+
+
+def test_resize_text_editor_ignores_reentrant_font_updates() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
+    document = LabelDocument(profile_name=profile.name)
+    text_object = document.create_text(50, 30)
+    canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
+
+    class ReentrantTextEditor(FakeTextEditor):
+        def setFont(self, font) -> None:  # noqa: N802
+            super().setFont(font)
+            LabelCanvas._resize_text_editor(canvas)
+
+    canvas._text_editor = ReentrantTextEditor("Typed")
+    canvas._editing_object_id = text_object.geometry.id
+
+    LabelCanvas._resize_text_editor(canvas)
+
+    assert canvas._text_editor.geometry is not None
+    assert canvas._resizing_text_editor is False
+
+
+def test_paint_document_omits_active_editing_object_to_avoid_ghost_text() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
+    document = LabelDocument(profile_name=profile.name)
+    editing_object = document.add_object(
+        TextObject(
+            geometry=ObjectGeometry(id="editing", selected=True),
+            text="Text",
+        )
+    )
+    other_object = document.add_object(
+        TextObject(geometry=ObjectGeometry(id="other"), text="Other")
+    )
+    canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
+    canvas._editing_object_id = editing_object.geometry.id
+
+    paint_document = LabelCanvas._paint_document(canvas)
+
+    assert paint_document.objects == [other_object]
+    assert document.objects == [editing_object, other_object]
 
 
 def test_refresh_active_editor_applies_style_without_changing_geometry() -> None:
