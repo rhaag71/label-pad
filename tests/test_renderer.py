@@ -8,7 +8,6 @@ from label_pad.renderer import (
     QtRenderContext,
     Renderer,
 )
-from label_pad.text_fonts import qt_point_size_for_document_points
 
 
 class RecordingRenderContext:
@@ -137,7 +136,7 @@ def test_qt_render_context_applies_point_size_and_bold_flag() -> None:
     )
 
     assert painter.font is not None
-    assert painter.font.pointSizeF() == qt_point_size_for_document_points(14)
+    assert painter.font.pointSizeF() == 14
     assert painter.font.bold() is False
 
 
