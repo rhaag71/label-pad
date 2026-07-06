@@ -11,7 +11,6 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfgen.canvas import Canvas
 
 from label_pad.model import ImageObject, LabelDocument, TextObject
-from label_pad.text_fonts import qt_point_size_for_document_points
 from label_pad.text_layout import (
     TEXT_BOX_HORIZONTAL_PADDING,
     TEXT_BOX_VERTICAL_PADDING,
@@ -97,7 +96,7 @@ class QtRenderContext(RenderContext):
         self._painter.translate(x, y)
         self._painter.rotate(rotation)
         font = QFont(font_family)
-        font.setPointSizeF(qt_point_size_for_document_points(font_size))
+        font.setPointSizeF(font_size)
         font.setBold(bold)
         font.setItalic(italic)
         font.setUnderline(underline)
