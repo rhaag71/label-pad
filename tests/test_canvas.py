@@ -1,5 +1,6 @@
 import os
 from dataclasses import replace
+from math import floor
 
 import pytest
 from PySide6.QtCore import QEvent, Qt
@@ -17,11 +18,13 @@ from label_pad.canvas import (
     hit_test_text_object,
     hit_test_text_resize_handle,
     label_coordinates_from_widget,
+    label_size_points,
     measured_text_box_size,
     natural_text_box_auto_width,
     natural_text_box_height,
     natural_text_box_minimum_width,
     preview_rect,
+    preview_scale,
     text_object_bounds,
     text_object_hit_rect,
     text_object_resize_handle_rect,
@@ -40,6 +43,37 @@ def qapplication():
 
 def replace_text_object(text_object: TextObject, text: str) -> TextObject:
     return replace(text_object, text=text)
+
+
+def widget_point(
+    *,
+    profile: LabelProfile,
+    width: int,
+    height: int,
+    x: float,
+    y: float,
+) -> tuple[float, float]:
+    rect = preview_rect(width=width, height=height, profile=profile)
+    scale = preview_scale(width=width, height=height, profile=profile)
+    return (rect.x() + x * scale, rect.y() + y * scale)
+
+
+def mouse_event_at(
+    profile: LabelProfile,
+    *,
+    x: float,
+    y: float,
+    width: int = 248,
+    height: int = 400,
+) -> "FakeMouseEvent":
+    widget_x, widget_y = widget_point(
+        profile=profile,
+        width=width,
+        height=height,
+        x=x,
+        y=y,
+    )
+    return FakeMouseEvent(x=widget_x, y=widget_y)
 
 
 def test_preview_rect_preserves_profile_aspect_ratio_when_width_limited() -> None:
@@ -99,7 +133,7 @@ def test_label_coordinates_from_widget_converts_inside_point_to_label_point() ->
         profile=profile,
     )
 
-    assert coordinates == (50, 30)
+    assert coordinates == pytest.approx((70.8661417, 42.5196850))
 
 
 def test_label_coordinates_from_widget_returns_none_outside_label() -> None:
@@ -122,6 +156,34 @@ def test_label_coordinates_from_widget_returns_none_outside_label() -> None:
     )
 
     assert coordinates is None
+
+
+def test_preview_scale_changes_with_widget_size_without_changing_geometry() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
+    document = LabelDocument(profile_name=profile.name)
+    text_object = document.add_object(
+        TextObject(
+            geometry=ObjectGeometry(id="text", x=50, y=30, width=40, height=20),
+            text="Text",
+        )
+    )
+
+    small_scale = preview_scale(width=248, height=400, profile=profile)
+    large_scale = preview_scale(width=448, height=400, profile=profile)
+
+    assert large_scale > small_scale
+    assert text_object.geometry.x == 50
+    assert text_object.geometry.y == 30
+    assert text_object.geometry.width == 40
+    assert text_object.geometry.height == 20
 
 
 def test_text_object_bounds_use_object_geometry_box() -> None:
@@ -169,48 +231,52 @@ def test_text_object_bounds_come_from_shared_canvas_text_layout() -> None:
 
 
 def test_canvas_text_layout_editor_rect_expands_right_from_text_anchor() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
     label_rect = preview_rect(
         width=248,
         height=400,
-        profile=LabelProfile(
-            name="Wide",
-            page_width_mm=100,
-            page_height_mm=50,
-            label_width_mm=100,
-            label_height_mm=50,
-            columns=1,
-            rows=1,
-        ),
+        profile=profile,
     )
+    scale = preview_scale(width=248, height=400, profile=profile)
     text_object = TextObject(
         geometry=ObjectGeometry(x=50, y=30),
         text="Text",
         font_size=12,
     )
 
-    short_rect = canvas_text_layout(text_object).editor_rect(label_rect)
+    short_rect = canvas_text_layout(text_object).editor_rect(label_rect, scale)
     long_rect = canvas_text_layout(
         replace_text_object(text_object, "A much longer text value")
-    ).editor_rect(label_rect)
+    ).editor_rect(label_rect, scale)
 
     assert long_rect.x() == short_rect.x()
     assert long_rect.width() > short_rect.width()
 
 
 def test_canvas_text_layout_editor_rect_clamps_width_inside_label() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
     label_rect = preview_rect(
         width=248,
         height=400,
-        profile=LabelProfile(
-            name="Wide",
-            page_width_mm=100,
-            page_height_mm=50,
-            label_width_mm=100,
-            label_height_mm=50,
-            columns=1,
-            rows=1,
-        ),
+        profile=profile,
     )
+    scale = preview_scale(width=248, height=400, profile=profile)
     text_object = TextObject(
         geometry=ObjectGeometry(x=190, y=30),
         text="Text",
@@ -219,26 +285,28 @@ def test_canvas_text_layout_editor_rect_clamps_width_inside_label() -> None:
 
     editor_rect = canvas_text_layout(
         replace_text_object(text_object, "A much longer text value")
-    ).editor_rect(label_rect)
+    ).editor_rect(label_rect, scale)
 
-    assert editor_rect.x() == label_rect.x() + 190
+    assert editor_rect.x() == floor(label_rect.x() + 190 * scale)
     assert editor_rect.x() + editor_rect.width() == label_rect.x() + label_rect.width()
 
 
 def test_canvas_text_layout_editor_rect_keeps_left_edge_fixed_for_long_text() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
     label_rect = preview_rect(
         width=248,
         height=400,
-        profile=LabelProfile(
-            name="Wide",
-            page_width_mm=100,
-            page_height_mm=50,
-            label_width_mm=100,
-            label_height_mm=50,
-            columns=1,
-            rows=1,
-        ),
+        profile=profile,
     )
+    scale = preview_scale(width=248, height=400, profile=profile)
     text_object = TextObject(
         geometry=ObjectGeometry(x=50, y=30),
         text="Text",
@@ -247,9 +315,9 @@ def test_canvas_text_layout_editor_rect_keeps_left_edge_fixed_for_long_text() ->
 
     editor_rect = canvas_text_layout(
         replace_text_object(text_object, "A" * 200)
-    ).editor_rect(label_rect)
+    ).editor_rect(label_rect, scale)
 
-    assert editor_rect.x() == label_rect.x() + 50
+    assert editor_rect.x() == floor(label_rect.x() + 50 * scale)
     assert editor_rect.x() + editor_rect.width() == label_rect.x() + label_rect.width()
 
 
@@ -458,7 +526,7 @@ def test_single_click_existing_text_selects_without_creating_object() -> None:
         )
     )
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
-    event = FakeMouseEvent(x=75, y=185)
+    event = mouse_event_at(profile, x=51, y=35)
 
     LabelCanvas.mousePressEvent(canvas, event)
 
@@ -471,6 +539,41 @@ def test_single_click_existing_text_selects_without_creating_object() -> None:
     assert canvas.focused
     assert canvas.update_count == 1
     assert event.accepted
+
+
+def test_single_click_existing_text_does_not_change_geometry() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
+    document = LabelDocument(profile_name=profile.name)
+    document.add_object(
+        TextObject(
+            geometry=ObjectGeometry(
+                id="text",
+                x=50,
+                y=30,
+                width=80,
+                height=24,
+            ),
+            text="Text",
+        )
+    )
+    canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
+    event = mouse_event_at(profile, x=55, y=35)
+
+    LabelCanvas.mousePressEvent(canvas, event)
+
+    assert document.objects[0].geometry.x == 50
+    assert document.objects[0].geometry.y == 30
+    assert document.objects[0].geometry.width == 80
+    assert document.objects[0].geometry.height == 24
+    assert document.objects[0].geometry.selected is True
 
 
 def test_drag_starts_when_pressing_existing_text_box() -> None:
@@ -491,14 +594,14 @@ def test_drag_starts_when_pressing_existing_text_box() -> None:
         )
     )
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
-    event = FakeMouseEvent(x=75, y=185)
+    event = mouse_event_at(profile, x=51, y=35)
 
     LabelCanvas.mousePressEvent(canvas, event)
 
     assert canvas._drag_state is not None
     assert canvas._drag_state.object_id == text_object.geometry.id
-    assert canvas._drag_state.start_pointer_x == 51
-    assert canvas._drag_state.start_pointer_y == 35
+    assert canvas._drag_state.start_pointer_x == pytest.approx(51)
+    assert canvas._drag_state.start_pointer_y == pytest.approx(35)
     assert event.accepted
 
 
@@ -521,14 +624,14 @@ def test_drag_move_updates_selected_text_geometry_and_preserves_size() -> None:
     )
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
 
-    LabelCanvas.mousePressEvent(canvas, FakeMouseEvent(x=75, y=185))
-    move_event = FakeMouseEvent(x=95, y=205)
+    LabelCanvas.mousePressEvent(canvas, mouse_event_at(profile, x=51, y=35))
+    move_event = mouse_event_at(profile, x=71, y=55)
     LabelCanvas.mouseMoveEvent(canvas, move_event)
 
     moved_object = document.find_by_id("text")
     assert isinstance(moved_object, TextObject)
-    assert moved_object.geometry.x == 70
-    assert moved_object.geometry.y == 50
+    assert moved_object.geometry.x == pytest.approx(70)
+    assert moved_object.geometry.y == pytest.approx(50)
     assert moved_object.geometry.width == 40
     assert moved_object.geometry.height == 20
     assert moved_object.geometry.selected is True
@@ -562,14 +665,14 @@ def test_drag_can_start_from_padded_area_inside_selected_box() -> None:
     )
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
 
-    LabelCanvas.mousePressEvent(canvas, FakeMouseEvent(x=150, y=202))
-    move_event = FakeMouseEvent(x=160, y=212)
+    LabelCanvas.mousePressEvent(canvas, mouse_event_at(profile, x=126, y=52))
+    move_event = mouse_event_at(profile, x=136, y=62)
     LabelCanvas.mouseMoveEvent(canvas, move_event)
 
     moved_object = document.find_by_id("text")
     assert isinstance(moved_object, TextObject)
-    assert moved_object.geometry.x == 60
-    assert moved_object.geometry.y == 40
+    assert moved_object.geometry.x == pytest.approx(60)
+    assert moved_object.geometry.y == pytest.approx(40)
     assert moved_object.geometry.width == 90
     assert moved_object.geometry.height == 28
     assert move_event.accepted
@@ -594,15 +697,15 @@ def test_drag_release_finishes_drag_without_changing_geometry() -> None:
     )
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
 
-    LabelCanvas.mousePressEvent(canvas, FakeMouseEvent(x=75, y=185))
-    LabelCanvas.mouseMoveEvent(canvas, FakeMouseEvent(x=95, y=205))
-    release_event = FakeMouseEvent(x=95, y=205)
+    LabelCanvas.mousePressEvent(canvas, mouse_event_at(profile, x=51, y=35))
+    LabelCanvas.mouseMoveEvent(canvas, mouse_event_at(profile, x=71, y=55))
+    release_event = mouse_event_at(profile, x=71, y=55)
     LabelCanvas.mouseReleaseEvent(canvas, release_event)
 
     moved_object = document.find_by_id("text")
     assert isinstance(moved_object, TextObject)
-    assert moved_object.geometry.x == 70
-    assert moved_object.geometry.y == 50
+    assert moved_object.geometry.x == pytest.approx(70)
+    assert moved_object.geometry.y == pytest.approx(50)
     assert canvas._drag_state is None
     assert release_event.accepted
 
@@ -626,13 +729,14 @@ def test_drag_move_clamps_text_box_inside_label_bounds() -> None:
     )
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
 
-    LabelCanvas.mousePressEvent(canvas, FakeMouseEvent(x=204, y=240))
+    LabelCanvas.mousePressEvent(canvas, mouse_event_at(profile, x=190, y=95))
     LabelCanvas.mouseMoveEvent(canvas, FakeMouseEvent(x=500, y=500))
 
     moved_object = document.find_by_id("text")
     assert isinstance(moved_object, TextObject)
-    assert moved_object.geometry.x == 160
-    assert moved_object.geometry.y == 70
+    label_width, label_height = label_size_points(profile)
+    assert moved_object.geometry.x == label_width - 40
+    assert moved_object.geometry.y == label_height - 30
     assert moved_object.geometry.width == 40
     assert moved_object.geometry.height == 30
 
@@ -663,16 +767,16 @@ def test_resize_handle_drag_updates_size_without_moving_origin() -> None:
     )
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
 
-    LabelCanvas.mousePressEvent(canvas, FakeMouseEvent(x=112, y=202))
-    move_event = FakeMouseEvent(x=132, y=217)
+    LabelCanvas.mousePressEvent(canvas, mouse_event_at(profile, x=87, y=47))
+    move_event = mouse_event_at(profile, x=107, y=62)
     LabelCanvas.mouseMoveEvent(canvas, move_event)
 
     resized_object = document.find_by_id("text")
     assert isinstance(resized_object, TextObject)
     assert resized_object.geometry.x == 50
     assert resized_object.geometry.y == 30
-    assert resized_object.geometry.width == 60
-    assert resized_object.geometry.height == 35
+    assert resized_object.geometry.width == pytest.approx(60)
+    assert resized_object.geometry.height == pytest.approx(35)
     assert resized_object.geometry.selected is True
     assert resized_object.auto_size is False
     assert canvas._drag_state is None
@@ -706,8 +810,8 @@ def test_resize_handle_drag_enforces_minimum_size() -> None:
     )
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
 
-    LabelCanvas.mousePressEvent(canvas, FakeMouseEvent(x=112, y=202))
-    LabelCanvas.mouseMoveEvent(canvas, FakeMouseEvent(x=20, y=120))
+    LabelCanvas.mousePressEvent(canvas, mouse_event_at(profile, x=87, y=47))
+    LabelCanvas.mouseMoveEvent(canvas, mouse_event_at(profile, x=-5, y=-5))
 
     resized_object = document.find_by_id("text")
     assert isinstance(resized_object, TextObject)
@@ -748,14 +852,14 @@ def test_resize_handle_drag_enforces_longest_word_minimum_width() -> None:
     )
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
 
-    LabelCanvas.mousePressEvent(canvas, FakeMouseEvent(x=192, y=206))
-    LabelCanvas.mouseMoveEvent(canvas, FakeMouseEvent(x=20, y=120))
+    LabelCanvas.mousePressEvent(canvas, mouse_event_at(profile, x=167, y=56))
+    LabelCanvas.mouseMoveEvent(canvas, mouse_event_at(profile, x=-5, y=-5))
 
     resized_object = document.find_by_id("text")
     assert isinstance(resized_object, TextObject)
     assert resized_object.geometry.x == 50
     assert resized_object.geometry.width == min(
-        150,
+        label_size_points(profile)[0] - 50,
         natural_text_box_minimum_width(resized_object),
     )
     assert resized_object.geometry.height == min(
@@ -793,15 +897,16 @@ def test_resize_handle_clamps_long_word_minimum_to_remaining_label_width() -> No
     )
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
 
-    LabelCanvas.mousePressEvent(canvas, FakeMouseEvent(x=222, y=206))
-    LabelCanvas.mouseMoveEvent(canvas, FakeMouseEvent(x=20, y=120))
+    LabelCanvas.mousePressEvent(canvas, mouse_event_at(profile, x=197, y=56))
+    LabelCanvas.mouseMoveEvent(canvas, mouse_event_at(profile, x=-5, y=-5))
 
     resized_object = document.find_by_id("text")
     assert isinstance(resized_object, TextObject)
     assert natural_text_box_minimum_width(resized_object) > 30
     assert resized_object.geometry.x == 170
-    assert resized_object.geometry.width == 30
-    assert resized_object.geometry.x + resized_object.geometry.width == 200
+    label_width, _ = label_size_points(profile)
+    assert resized_object.geometry.width == label_width - 170
+    assert resized_object.geometry.x + resized_object.geometry.width == label_width
 
 
 def test_resize_narrower_increases_live_minimum_height_for_wrapped_text() -> None:
@@ -830,8 +935,8 @@ def test_resize_narrower_increases_live_minimum_height_for_wrapped_text() -> Non
     )
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
 
-    LabelCanvas.mousePressEvent(canvas, FakeMouseEvent(x=172, y=202))
-    LabelCanvas.mouseMoveEvent(canvas, FakeMouseEvent(x=112, y=120))
+    LabelCanvas.mousePressEvent(canvas, mouse_event_at(profile, x=147, y=52))
+    LabelCanvas.mouseMoveEvent(canvas, mouse_event_at(profile, x=87, y=-5))
 
     resized_object = document.find_by_id("text")
     assert isinstance(resized_object, TextObject)
@@ -870,8 +975,8 @@ def test_resize_wider_can_reduce_live_minimum_height_for_wrapped_text() -> None:
     )
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
 
-    LabelCanvas.mousePressEvent(canvas, FakeMouseEvent(x=112, y=237))
-    LabelCanvas.mouseMoveEvent(canvas, FakeMouseEvent(x=172, y=152))
+    LabelCanvas.mousePressEvent(canvas, mouse_event_at(profile, x=87, y=87))
+    LabelCanvas.mouseMoveEvent(canvas, mouse_event_at(profile, x=147, y=2))
 
     resized_object = document.find_by_id("text")
     assert isinstance(resized_object, TextObject)
@@ -907,7 +1012,7 @@ def test_hover_over_selected_text_box_uses_move_cursor() -> None:
         )
     )
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
-    event = FakeMouseEvent(x=150, y=202)
+    event = mouse_event_at(profile, x=126, y=52)
 
     LabelCanvas.mouseMoveEvent(canvas, event)
 
@@ -965,7 +1070,7 @@ def test_double_click_existing_text_starts_editing_without_creating_object() -> 
         )
     )
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
-    event = FakeMouseEvent(x=75, y=185)
+    event = mouse_event_at(profile, x=51, y=35)
 
     LabelCanvas.mouseDoubleClickEvent(canvas, event)
 
@@ -996,7 +1101,7 @@ def test_double_click_selected_text_starts_editing() -> None:
         )
     )
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
-    event = FakeMouseEvent(x=75, y=185)
+    event = mouse_event_at(profile, x=51, y=35)
 
     LabelCanvas.mouseDoubleClickEvent(canvas, event)
 
@@ -1021,7 +1126,7 @@ def test_double_click_empty_label_creates_text_and_starts_editing() -> None:
     )
     document = LabelDocument(profile_name=profile.name)
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
-    event = FakeMouseEvent(x=74, y=180)
+    event = mouse_event_at(profile, x=50, y=30)
 
     LabelCanvas.mouseDoubleClickEvent(canvas, event)
 
@@ -1029,8 +1134,8 @@ def test_double_click_empty_label_creates_text_and_starts_editing() -> None:
     text_object = document.objects[0]
     assert isinstance(text_object, TextObject)
     assert text_object.text == "Text"
-    assert text_object.geometry.x == 50
-    assert text_object.geometry.y == 30
+    assert text_object.geometry.x == pytest.approx(50)
+    assert text_object.geometry.y == pytest.approx(30)
     assert (
         text_object.geometry.width,
         text_object.geometry.height,
@@ -1041,6 +1146,28 @@ def test_double_click_empty_label_creates_text_and_starts_editing() -> None:
     assert canvas.update_count == 1
     assert event.accepted
     assert not event.ignored
+
+
+def test_double_click_empty_label_can_place_text_near_edge() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
+    document = LabelDocument(profile_name=profile.name)
+    canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
+    event = mouse_event_at(profile, x=2, y=2)
+
+    LabelCanvas.mouseDoubleClickEvent(canvas, event)
+
+    text_object = document.objects[0]
+    assert isinstance(text_object, TextObject)
+    assert text_object.geometry.x == pytest.approx(2)
+    assert text_object.geometry.y == pytest.approx(2)
 
 
 def test_double_click_after_initial_empty_press_creates_one_text_object() -> None:
@@ -1056,8 +1183,8 @@ def test_double_click_after_initial_empty_press_creates_one_text_object() -> Non
     document = LabelDocument(profile_name=profile.name)
     canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
 
-    LabelCanvas.mousePressEvent(canvas, FakeMouseEvent(x=74, y=180))
-    LabelCanvas.mouseDoubleClickEvent(canvas, FakeMouseEvent(x=74, y=180))
+    LabelCanvas.mousePressEvent(canvas, mouse_event_at(profile, x=50, y=30))
+    LabelCanvas.mouseDoubleClickEvent(canvas, mouse_event_at(profile, x=50, y=30))
 
     assert len(document.objects) == 1
     assert canvas.edit_started_with == document.objects[0]
@@ -1204,6 +1331,54 @@ def test_resize_text_editor_auto_grows_new_text_box_width_while_typing() -> None
     assert canvas._text_editor.geometry.right() <= 224
 
 
+def test_refresh_active_editor_applies_style_without_changing_geometry() -> None:
+    profile = LabelProfile(
+        name="Wide",
+        page_width_mm=100,
+        page_height_mm=50,
+        label_width_mm=100,
+        label_height_mm=50,
+        columns=1,
+        rows=1,
+    )
+    document = LabelDocument(profile_name=profile.name)
+    text_object = document.add_object(
+        TextObject(
+            geometry=ObjectGeometry(
+                id="text",
+                x=50,
+                y=30,
+                width=80,
+                height=24,
+                selected=True,
+            ),
+            text="Editing",
+            font_family="Courier New",
+            font_size=18,
+            bold=True,
+            italic=True,
+            underline=True,
+            alignment="right",
+            auto_size=False,
+        )
+    )
+    canvas = FakeCanvas(profile=profile, document=document, width=248, height=400)
+    canvas._text_editor = FakeTextEditor("Editing")
+    canvas._editing_object_id = text_object.geometry.id
+
+    LabelCanvas.refresh_active_editor(canvas)
+
+    scale = preview_scale(width=248, height=400, profile=profile)
+    assert canvas._text_editor.font.family() == "Courier New"
+    assert canvas._text_editor.font.pointSizeF() == pytest.approx(18 * scale)
+    assert canvas._text_editor.font.bold() is True
+    assert canvas._text_editor.font.italic() is True
+    assert canvas._text_editor.font.underline() is True
+    assert canvas._text_editor.alignment & Qt.AlignmentFlag.AlignRight
+    assert document.objects[0].geometry.width == 80
+    assert document.objects[0].geometry.height == 24
+
+
 def test_finish_text_edit_commits_editor_text() -> None:
     profile = LabelProfile(
         name="Wide",
@@ -1299,7 +1474,7 @@ def test_finish_text_edit_preserves_width_and_enforces_minimum_height() -> None:
 
     assert document.objects[0].geometry.width == 24
     assert document.objects[0].geometry.height == min(
-        70,
+        label_size_points(profile)[1] - 30,
         natural_text_box_height(
             document.objects[0],
             24,
@@ -1333,7 +1508,7 @@ def test_finish_text_edit_auto_sized_text_grows_to_unwrapped_text_width() -> Non
     updated_object = document.objects[0]
     assert updated_object.geometry.width == natural_text_box_auto_width(
         updated_object,
-        max_width=150,
+        max_width=label_size_points(profile)[0] - 50,
     )
     assert updated_object.geometry.height == natural_text_box_height(
         updated_object,
@@ -1367,9 +1542,10 @@ def test_finish_text_edit_clamps_long_auto_sized_text_to_label_bounds() -> None:
     updated_object = document.objects[0]
     assert updated_object.geometry.x == 150
     assert updated_object.geometry.y == 30
-    assert updated_object.geometry.width == 50
-    assert updated_object.geometry.x + updated_object.geometry.width == 200
-    assert text_object_resize_handle_rect(updated_object).right() <= 200
+    label_width, _ = label_size_points(profile)
+    assert updated_object.geometry.width == label_width - 150
+    assert updated_object.geometry.x + updated_object.geometry.width == label_width
+    assert text_object_resize_handle_rect(updated_object).right() <= label_width
 
 
 def test_finish_text_edit_keeps_resize_handle_inside_label_after_tall_wrap() -> None:
@@ -1398,8 +1574,9 @@ def test_finish_text_edit_keeps_resize_handle_inside_label_after_tall_wrap() -> 
     LabelCanvas._finish_text_edit(canvas, commit=True)
 
     updated_object = document.objects[0]
-    assert text_object_resize_handle_rect(updated_object).right() <= 200
-    assert text_object_resize_handle_rect(updated_object).bottom() <= 100
+    label_width, label_height = label_size_points(profile)
+    assert text_object_resize_handle_rect(updated_object).right() <= label_width
+    assert text_object_resize_handle_rect(updated_object).bottom() <= label_height
 
 
 def test_resized_text_box_wraps_at_user_width_after_edit() -> None:
@@ -1436,7 +1613,7 @@ def test_resized_text_box_wraps_at_user_width_after_edit() -> None:
     updated_object = document.objects[0]
     assert updated_object.geometry.width == 50
     assert updated_object.geometry.height == min(
-        70,
+        label_size_points(profile)[1] - 30,
         natural_text_box_height(
             updated_object,
             50,
@@ -1675,6 +1852,7 @@ class FakeCanvas:
         self.focused = False
         self.edit_started_with = None
         self.edit_started_created = None
+        self.selection_change_count = 0
         self.cursor_shape = None
         self._text_editor = None
         self._editing_object_id = None
@@ -1703,8 +1881,14 @@ class FakeCanvas:
     def _finish_text_edit(self, *, commit) -> None:
         LabelCanvas._finish_text_edit(self, commit=commit)
 
+    def _resize_text_editor(self) -> None:
+        LabelCanvas._resize_text_editor(self)
+
     def _update_hover_cursor(self, event) -> None:
         LabelCanvas._update_hover_cursor(self, event)
+
+    def _notify_selection_changed(self) -> None:
+        self.selection_change_count += 1
 
     def _start_text_edit(self, text_object, *, created) -> None:
         self.edit_started_with = text_object
@@ -1748,12 +1932,19 @@ class FakeTextEditor:
         self._text = text
         self.deleted = False
         self.geometry = None
+        self.alignment = None
 
     def text(self) -> str:
         return self._text
 
     def setGeometry(self, geometry) -> None:  # noqa: N802
         self.geometry = geometry
+
+    def setFont(self, font) -> None:  # noqa: N802
+        self.font = font
+
+    def setAlignment(self, alignment) -> None:  # noqa: N802
+        self.alignment = alignment
 
     def deleteLater(self) -> None:  # noqa: N802
         self.deleted = True

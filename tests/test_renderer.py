@@ -33,6 +33,8 @@ def test_renderer_draws_document_objects_in_order() -> None:
             font_size=18,
             bold=True,
             italic=False,
+            underline=True,
+            alignment="center",
         )
     )
     document.add_object(
@@ -59,9 +61,12 @@ def test_renderer_draws_document_objects_in_order() -> None:
                 "font_size": 18,
                 "bold": True,
                 "italic": False,
+                "underline": True,
                 "width": 80,
                 "height": 24,
                 "wrap": True,
+                "alignment": "center",
+                "text_color": "black",
                 "rotation": 15,
             },
         ),
@@ -110,6 +115,9 @@ class RecordingPdfCanvas:
     def drawString(self, x, y, text) -> None:  # noqa: N802
         self.calls.append(("drawString", x, y, text))
 
+    def line(self, x1, y1, x2, y2) -> None:
+        self.calls.append(("line", x1, y1, x2, y2))
+
     def beginText(self, x, y) -> "RecordingPdfText":  # noqa: N802
         self.calls.append(("beginText", x, y))
         return RecordingPdfText(self.calls)
@@ -154,6 +162,7 @@ def test_pdf_render_context_converts_text_top_left_y_to_pdf_baseline() -> None:
         font_size=12,
         bold=False,
         italic=False,
+        underline=False,
     )
 
     translated_call = (
@@ -180,19 +189,16 @@ def test_pdf_render_context_wraps_text_inside_box() -> None:
         font_size=12,
         bold=False,
         italic=False,
+        underline=False,
         width=52,
         height=40,
         wrap=True,
     )
 
     assert ("translate", 8, 54) in pdf.calls
-    assert (
-        "beginText",
-        TEXT_BOX_HORIZONTAL_PADDING,
-        -TEXT_BOX_VERTICAL_PADDING - 12,
-    ) in pdf.calls
-    assert ("text.setFont", "Helvetica", 12) in pdf.calls
-    assert ("drawText", ["Known", "Good"]) in pdf.calls
+    assert ("setFont", "Helvetica", 12) in pdf.calls
+    assert ("drawString", TEXT_BOX_HORIZONTAL_PADDING, -14, "Known") in pdf.calls
+    assert ("drawString", TEXT_BOX_HORIZONTAL_PADDING, -28.4, "Good") in pdf.calls
 
 
 def test_pdf_render_context_renders_text_black() -> None:
@@ -207,12 +213,55 @@ def test_pdf_render_context_renders_text_black() -> None:
         font_size=12,
         bold=False,
         italic=False,
+        underline=False,
         width=80,
         height=24,
         wrap=True,
     )
 
     assert ("setFillColorRGB", 0, 0, 0) in pdf.calls
+
+
+def test_pdf_render_context_underlines_text() -> None:
+    pdf = RecordingPdfCanvas()
+    context = PdfRenderContext(pdf, page_height=72)
+
+    context.draw_text(
+        x=8,
+        y=18,
+        text="Known",
+        font_family="Arial",
+        font_size=12,
+        bold=False,
+        italic=False,
+        underline=True,
+    )
+
+    assert any(call[0] == "line" for call in pdf.calls)
+
+
+def test_pdf_render_context_aligns_wrapped_text() -> None:
+    pdf = RecordingPdfCanvas()
+    context = PdfRenderContext(pdf, page_height=72)
+
+    context.draw_text(
+        x=8,
+        y=18,
+        text="Known",
+        font_family="Arial",
+        font_size=12,
+        bold=False,
+        italic=False,
+        underline=False,
+        width=100,
+        height=30,
+        wrap=True,
+        alignment="center",
+    )
+
+    draw_calls = [call for call in pdf.calls if call[0] == "drawString"]
+    assert draw_calls
+    assert draw_calls[0][1] > TEXT_BOX_HORIZONTAL_PADDING
 
 
 def test_pdf_render_context_preserves_explicit_newlines_when_wrapping() -> None:
@@ -227,12 +276,14 @@ def test_pdf_render_context_preserves_explicit_newlines_when_wrapping() -> None:
         font_size=12,
         bold=False,
         italic=False,
+        underline=False,
         width=100,
         height=40,
         wrap=True,
     )
 
-    assert ("drawText", ["Alpha", "Beta Gamma"]) in pdf.calls
+    assert ("drawString", TEXT_BOX_HORIZONTAL_PADDING, -14, "Alpha") in pdf.calls
+    assert ("drawString", TEXT_BOX_HORIZONTAL_PADDING, -28.4, "Beta Gamma") in pdf.calls
 
 
 def test_pdf_render_context_converts_image_top_left_y_to_pdf_bottom_left() -> None:

@@ -1,9 +1,10 @@
 from label_pad.main_window import (
     MainWindow,
+    _is_practical_label_font,
     is_likely_thermal_printer,
     ordered_printer_names,
 )
-from label_pad.model import LabelDocument, TextObject
+from label_pad.model import LabelDocument, ObjectGeometry, TextObject
 from label_pad.profiles import LabelProfile
 
 
@@ -132,3 +133,227 @@ def test_print_label_exports_the_active_preview_document(tmp_path, monkeypatch) 
 
     assert exported == [(str(tmp_path / "label.pdf"), profile, document)]
     assert printed == [(str(tmp_path / "label.pdf"), "Rollo_X1038", "2x1")]
+
+
+def test_format_toolbar_updates_selected_text_object() -> None:
+    document = LabelDocument(profile_name="Test")
+    document.add_object(
+        TextObject(
+            geometry=ObjectGeometry(
+                id="text",
+                width=80,
+                height=24,
+                selected=True,
+            )
+        )
+    )
+    canvas = FakeCanvas()
+    window = _format_window(document=document, canvas=canvas)
+    window._font_family_combo.current_family = "Courier New"
+    window._font_size_spin.current_value = 18
+    window._bold_button.checked = True
+    window._italic_button.checked = True
+    window._underline_button.checked = True
+    window._wrap_button.checked = False
+    window._alignment_combo.current_data = "center"
+
+    MainWindow._format_changed(window)
+
+    text_object = document.objects[0]
+    assert isinstance(text_object, TextObject)
+    assert text_object.font_family == "Courier New"
+    assert text_object.font_size == 18
+    assert text_object.bold is True
+    assert text_object.italic is True
+    assert text_object.underline is True
+    assert text_object.wrap is False
+    assert text_object.alignment == "center"
+    assert text_object.geometry.width == 80
+    assert text_object.geometry.height == 24
+    assert canvas.refresh_count == 1
+    assert canvas.update_count == 1
+
+
+def test_format_toolbar_updates_document_defaults_without_selection() -> None:
+    document = LabelDocument(profile_name="Test")
+    canvas = FakeCanvas()
+    window = _format_window(document=document, canvas=canvas)
+    window._font_family_combo.current_family = "Arial"
+    window._font_size_spin.current_value = 16
+    window._bold_button.checked = True
+    window._italic_button.checked = False
+    window._underline_button.checked = True
+    window._wrap_button.checked = True
+    window._alignment_combo.current_data = "right"
+
+    MainWindow._format_changed(window)
+    text_object = document.create_text(10, 20)
+
+    assert document.defaults.font_family == "Arial"
+    assert document.defaults.font_size == 16
+    assert document.defaults.bold is True
+    assert document.defaults.underline is True
+    assert document.defaults.alignment == "right"
+    assert text_object.font_family == "Arial"
+    assert text_object.font_size == 16
+    assert text_object.bold is True
+    assert text_object.underline is True
+    assert text_object.alignment == "right"
+    assert canvas.update_count == 1
+
+
+def test_format_toolbar_reflects_selected_text_object() -> None:
+    document = LabelDocument(profile_name="Test")
+    document.add_object(
+        TextObject(
+            geometry=ObjectGeometry(id="text", selected=True),
+            font_family="Courier New",
+            font_size=20,
+            bold=True,
+            italic=True,
+            underline=True,
+            wrap=False,
+            alignment="right",
+        )
+    )
+    window = _format_window(document=document, canvas=FakeCanvas())
+
+    MainWindow._sync_format_toolbar(window)
+
+    assert window._font_family_combo.current_family == "Courier New"
+    assert window._font_size_spin.current_value == 20
+    assert window._bold_button.checked is True
+    assert window._italic_button.checked is True
+    assert window._underline_button.checked is True
+    assert window._wrap_button.checked is False
+    assert window._alignment_combo.current_data == "right"
+
+
+def test_format_toolbar_reflects_document_defaults_without_selection() -> None:
+    document = LabelDocument(profile_name="Test")
+    document.defaults = document.defaults.__class__(
+        font_family="Arial",
+        font_size=16,
+        bold=True,
+        italic=False,
+        underline=True,
+        wrap=False,
+        alignment="center",
+    )
+    window = _format_window(document=document, canvas=FakeCanvas())
+
+    MainWindow._sync_format_toolbar(window)
+
+    assert window._font_family_combo.current_family == "Arial"
+    assert window._font_size_spin.current_value == 16
+    assert window._bold_button.checked is True
+    assert window._underline_button.checked is True
+    assert window._wrap_button.checked is False
+    assert window._wrap_button.text == "No Wrap"
+    assert window._alignment_combo.current_data == "center"
+
+
+def test_practical_font_filter_removes_symbol_fonts() -> None:
+    assert _is_practical_label_font("Helvetica") is True
+    assert _is_practical_label_font("DejaVu Sans Mono") is True
+    assert _is_practical_label_font("Noto Color Emoji") is False
+    assert _is_practical_label_font("Symbol") is False
+
+
+class FakeCanvas:
+    def __init__(self) -> None:
+        self.update_count = 0
+        self.refresh_count = 0
+
+    def refresh_active_editor(self) -> None:
+        self.refresh_count += 1
+
+    def update(self) -> None:
+        self.update_count += 1
+
+
+class FakeFont:
+    def __init__(self, family: str) -> None:
+        self._family = family
+
+    def family(self) -> str:
+        return self._family
+
+
+class FakeFontCombo:
+    def __init__(self) -> None:
+        self.current_family = "Helvetica"
+        self.items = ["Helvetica"]
+
+    def currentText(self) -> str:  # noqa: N802
+        return self.current_family
+
+    def findText(self, text: str) -> int:  # noqa: N802
+        try:
+            return self.items.index(text)
+        except ValueError:
+            return -1
+
+    def addItem(self, text: str) -> None:  # noqa: N802
+        self.items.append(text)
+
+    def setCurrentText(self, text: str) -> None:  # noqa: N802
+        self.current_family = text
+
+    def setItemData(self, index: int, value, role) -> None:  # noqa: N802, ARG002
+        return
+
+
+class FakeSpin:
+    def __init__(self) -> None:
+        self.current_value = 14
+
+    def setValue(self, value: int) -> None:  # noqa: N802
+        self.current_value = value
+
+    def value(self) -> int:
+        return self.current_value
+
+
+class FakeButton:
+    def __init__(self) -> None:
+        self.checked = False
+        self.text = ""
+
+    def isChecked(self) -> bool:  # noqa: N802
+        return self.checked
+
+    def setChecked(self, checked: bool) -> None:  # noqa: N802
+        self.checked = checked
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        self.text = text
+
+
+class FakeAlignmentCombo:
+    def __init__(self) -> None:
+        self.current_data = "left"
+
+    def currentData(self):
+        return self.current_data
+
+    def findData(self, value) -> int:  # noqa: N802
+        return {"left": 0, "center": 1, "right": 2}.get(value, -1)
+
+    def setCurrentIndex(self, index: int) -> None:  # noqa: N802
+        self.current_data = ["left", "center", "right"][index]
+
+
+def _format_window(*, document: LabelDocument, canvas: FakeCanvas):
+    window = MainWindow.__new__(MainWindow)
+    window._document = document
+    window._canvas = canvas
+    window._syncing_format_toolbar = False
+    window._font_family_combo = FakeFontCombo()
+    window._font_size_spin = FakeSpin()
+    window._bold_button = FakeButton()
+    window._italic_button = FakeButton()
+    window._underline_button = FakeButton()
+    window._wrap_button = FakeButton()
+    window._alignment_combo = FakeAlignmentCombo()
+    return window

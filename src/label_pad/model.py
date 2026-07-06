@@ -27,11 +27,14 @@ class TextObject:
 
     geometry: ObjectGeometry = field(default_factory=ObjectGeometry)
     text: str = ""
-    font_family: str = "Arial"
+    font_family: str = "Helvetica"
     font_size: float = 14
     bold: bool = False
     italic: bool = False
+    underline: bool = False
     wrap: bool = True
+    alignment: str = "left"
+    text_color: str = "black"
     auto_size: bool = True
 
 
@@ -43,6 +46,10 @@ class DocumentDefaults:
     font_size: float = 14
     bold: bool = False
     italic: bool = False
+    underline: bool = False
+    wrap: bool = True
+    alignment: str = "left"
+    text_color: str = "black"
 
 
 @dataclass(frozen=True)
@@ -100,7 +107,10 @@ class LabelDocument:
                 font_size=self.defaults.font_size,
                 bold=self.defaults.bold,
                 italic=self.defaults.italic,
-                wrap=True,
+                underline=self.defaults.underline,
+                wrap=self.defaults.wrap,
+                alignment=self.defaults.alignment,
+                text_color=self.defaults.text_color,
             )
         )
 

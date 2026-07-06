@@ -13,8 +13,9 @@ from label_pad.model import DocumentObject, LabelDocument, ObjectGeometry, TextO
 from label_pad.profiles import LabelProfile
 from label_pad.renderer import QtRenderContext, Renderer
 
-TEXT_BOX_HORIZONTAL_PADDING = 3
-TEXT_BOX_VERTICAL_PADDING = 3
+POINTS_PER_MM = 72 / 25.4
+TEXT_BOX_HORIZONTAL_PADDING = 2
+TEXT_BOX_VERTICAL_PADDING = 2
 TEXT_BOX_HIT_SLOP = 4
 RESIZE_HANDLE_SIZE = 6
 RESIZE_HANDLE_HIT_SLOP = 3
@@ -57,6 +58,32 @@ def preview_rect(
     return QRect(x, y, canvas_width, canvas_height)
 
 
+def label_size_points(profile: LabelProfile) -> tuple[float, float]:
+    """Return label document size in PDF points."""
+    return (
+        profile.label_width_mm * POINTS_PER_MM,
+        profile.label_height_mm * POINTS_PER_MM,
+    )
+
+
+def preview_scale(
+    *,
+    width: int,
+    height: int,
+    profile: LabelProfile,
+    margin: int = 24,
+) -> float:
+    """Return widget-pixel scale for one document point in the preview."""
+    label_rect = preview_rect(
+        width=width,
+        height=height,
+        profile=profile,
+        margin=margin,
+    )
+    label_width, label_height = label_size_points(profile)
+    return min(label_rect.width() / label_width, label_rect.height() / label_height)
+
+
 def label_coordinates_from_widget(
     *,
     widget_x: float,
@@ -75,7 +102,16 @@ def label_coordinates_from_widget(
     )
     if not label_rect.contains(int(widget_x), int(widget_y)):
         return None
-    return (widget_x - label_rect.x(), widget_y - label_rect.y())
+    scale = preview_scale(
+        width=width,
+        height=height,
+        profile=profile,
+        margin=margin,
+    )
+    return (
+        (widget_x - label_rect.x()) / scale,
+        (widget_y - label_rect.y()) / scale,
+    )
 
 
 def clamped_label_coordinates_from_widget(
@@ -94,9 +130,16 @@ def clamped_label_coordinates_from_widget(
         profile=profile,
         margin=margin,
     )
+    scale = preview_scale(
+        width=width,
+        height=height,
+        profile=profile,
+        margin=margin,
+    )
+    label_width, label_height = label_size_points(profile)
     return (
-        min(max(widget_x - label_rect.x(), 0), label_rect.width()),
-        min(max(widget_y - label_rect.y(), 0), label_rect.height()),
+        min(max((widget_x - label_rect.x()) / scale, 0), label_width),
+        min(max((widget_y - label_rect.y()) / scale, 0), label_height),
     )
 
 
@@ -108,7 +151,7 @@ class CanvasTextLayout:
     font: QFont
     box_rect: QRectF
 
-    def editor_rect(self, label_rect: QRect) -> QRect:
+    def editor_rect(self, label_rect: QRect, scale: float) -> QRect:
         """Return an absolute editor rectangle clamped inside the label preview."""
         label_left = label_rect.x()
         label_top = label_rect.y()
@@ -116,18 +159,24 @@ class CanvasTextLayout:
         label_bottom = label_rect.y() + label_rect.height()
 
         left = min(
-            max(floor(label_left + self.box_rect.x()), label_left),
+            max(floor(label_left + self.box_rect.x() * scale), label_left),
             max(label_left, label_right - 1),
         )
         top = min(
-            max(floor(label_top + self.box_rect.y()), label_top),
+            max(floor(label_top + self.box_rect.y() * scale), label_top),
             max(label_top, label_bottom - 1),
         )
-        desired_width = max(MIN_EDITOR_WIDTH, ceil(self.box_rect.width()))
+        desired_width = max(MIN_EDITOR_WIDTH, ceil(self.box_rect.width() * scale))
         desired_height = max(
             1,
-            ceil(self.box_rect.height()),
-            ceil(natural_text_box_height(self.text_object, self.box_rect.width())),
+            ceil(self.box_rect.height() * scale),
+            ceil(
+                natural_text_box_height(
+                    self.text_object,
+                    self.box_rect.width(),
+                )
+                * scale
+            ),
         )
         width = min(desired_width, max(1, label_right - left))
         height = min(desired_height, max(1, label_bottom - top))
@@ -136,10 +185,20 @@ class CanvasTextLayout:
 
 def editor_font_for_text_object(text_object: TextObject) -> QFont:
     """Return the inline editor font matching the rendered text style."""
+    return editor_font_for_text_object_at_scale(text_object, scale=1)
+
+
+def editor_font_for_text_object_at_scale(
+    text_object: TextObject,
+    *,
+    scale: float,
+) -> QFont:
+    """Return the inline editor font scaled to widget preview pixels."""
     font = QFont(text_object.font_family)
-    font.setPointSizeF(text_object.font_size)
+    font.setPointSizeF(max(1, text_object.font_size * scale))
     font.setBold(text_object.bold)
     font.setItalic(text_object.italic)
+    font.setUnderline(text_object.underline)
     return font
 
 
@@ -400,11 +459,13 @@ class LabelCanvas(QWidget):
         profile: LabelProfile,
         document: LabelDocument,
         renderer: Renderer | None = None,
+        selection_changed_callback=None,
     ) -> None:
         super().__init__()
         self._profile = profile
         self._document = document
         self._renderer = renderer or Renderer()
+        self._selection_changed_callback = selection_changed_callback
         # Text editing state is separate from document box selection.
         self._text_editor = None
         self._editing_object_id = None
@@ -422,6 +483,7 @@ class LabelCanvas(QWidget):
 
     def clear(self) -> None:
         self._document.clear()
+        self._notify_selection_changed()
         self.update()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
@@ -439,6 +501,7 @@ class LabelCanvas(QWidget):
         )
         if coordinates is None:
             select_document_object(self._document, None)
+            self._notify_selection_changed()
             self.update()
             event.accept()
             return
@@ -447,6 +510,7 @@ class LabelCanvas(QWidget):
         resized_object = hit_test_text_resize_handle(self._document, x=x, y=y)
         if resized_object is not None:
             select_document_object(self._document, resized_object.geometry.id)
+            self._notify_selection_changed()
             self._resize_state = _resize_state_for_text_object(
                 text_object=resized_object,
                 pointer_x=x,
@@ -466,6 +530,7 @@ class LabelCanvas(QWidget):
                 pointer_x=x,
                 pointer_y=y,
             )
+        self._notify_selection_changed()
         self.update()
         event.accept()
 
@@ -485,11 +550,7 @@ class LabelCanvas(QWidget):
             height=self.height(),
             profile=self._profile,
         )
-        label_rect = preview_rect(
-            width=self.width(),
-            height=self.height(),
-            profile=self._profile,
-        )
+        label_width, label_height = label_size_points(self._profile)
         if self._resize_state is not None:
             label_object = self._document.find_by_id(self._resize_state.object_id)
             if not isinstance(label_object, TextObject):
@@ -500,8 +561,8 @@ class LabelCanvas(QWidget):
                 text_object=label_object,
                 pointer_x=pointer_x,
                 pointer_y=pointer_y,
-                label_width=label_rect.width(),
-                label_height=label_rect.height(),
+                label_width=label_width,
+                label_height=label_height,
             )
             resize_document_object(
                 self._document,
@@ -518,8 +579,8 @@ class LabelCanvas(QWidget):
             drag_state=self._drag_state,
             pointer_x=pointer_x,
             pointer_y=pointer_y,
-            label_width=label_rect.width(),
-            label_height=label_rect.height(),
+            label_width=label_width,
+            label_height=label_height,
         )
         move_document_object(self._document, self._drag_state.object_id, x=x, y=y)
         self.setCursor(Qt.CursorShape.ClosedHandCursor)
@@ -566,8 +627,10 @@ class LabelCanvas(QWidget):
             created = True
         else:
             select_document_object(self._document, selected_object.geometry.id)
+            self._notify_selection_changed()
             created = False
         self._start_text_edit(selected_object, created=created)
+        self._notify_selection_changed()
         self.update()
         event.accept()
 
@@ -589,6 +652,10 @@ class LabelCanvas(QWidget):
             self._document.remove_object(label_object.geometry.id)
         self.update()
         event.accept()
+
+    def _notify_selection_changed(self) -> None:
+        if self._selection_changed_callback is not None:
+            self._selection_changed_callback()
 
     def _update_hover_cursor(self, event) -> None:
         coordinates = label_coordinates_from_widget(
@@ -630,7 +697,8 @@ class LabelCanvas(QWidget):
         self._text_editor.setContentsMargins(0, 0, 0, 0)
         self._text_editor.setTextMargins(0, 0, 0, 0)
         self._text_editor.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            _qt_text_alignment(text_object.alignment)
+            | Qt.AlignmentFlag.AlignVCenter
         )
         self._text_editor.setFont(editor_font_for_text_object(text_object))
         self._text_editor.setText(text_object.text)
@@ -641,12 +709,35 @@ class LabelCanvas(QWidget):
             height=self.height(),
             profile=self._profile,
         )
+        scale = preview_scale(
+            width=self.width(),
+            height=self.height(),
+            profile=self._profile,
+        )
+        self._text_editor.setFont(
+            editor_font_for_text_object_at_scale(text_object, scale=scale)
+        )
         self._text_editor.setGeometry(
-            canvas_text_layout(text_object).editor_rect(label_rect)
+            canvas_text_layout(text_object).editor_rect(label_rect, scale)
         )
         self._text_editor.selectAll()
         self._text_editor.show()
         self._text_editor.setFocus()
+
+    def refresh_active_editor(self) -> None:
+        """Apply current TextObject formatting to the active inline editor."""
+        editor = self._text_editor
+        object_id = self._editing_object_id
+        if editor is None or object_id is None:
+            return
+        label_object = self._document.find_by_id(object_id)
+        if not isinstance(label_object, TextObject):
+            return
+        editor.setAlignment(
+            _qt_text_alignment(label_object.alignment)
+            | Qt.AlignmentFlag.AlignVCenter
+        )
+        self._resize_text_editor()
 
     def _resize_text_editor(self) -> None:
         editor = self._text_editor
@@ -661,14 +752,27 @@ class LabelCanvas(QWidget):
             height=self.height(),
             profile=self._profile,
         )
-        max_width = max(1, label_rect.width() - label_object.geometry.x)
+        scale = preview_scale(
+            width=self.width(),
+            height=self.height(),
+            profile=self._profile,
+        )
+        label_width, _ = label_size_points(self._profile)
+        max_width = max(1, label_width - label_object.geometry.x)
+        editor.setAlignment(
+            _qt_text_alignment(label_object.alignment)
+            | Qt.AlignmentFlag.AlignVCenter
+        )
+        editor.setFont(
+            editor_font_for_text_object_at_scale(label_object, scale=scale)
+        )
         editor.setGeometry(
             canvas_text_layout(
                 _with_live_editor_text_box(
                     replace(label_object, text=editor.text()),
                     max_width=max_width,
                 )
-            ).editor_rect(label_rect)
+            ).editor_rect(label_rect, scale)
         )
 
     def _cancel_text_edit(self) -> None:
@@ -687,13 +791,9 @@ class LabelCanvas(QWidget):
         if commit:
             label_object = self._document.find_by_id(object_id)
             if isinstance(label_object, TextObject):
-                label_rect = preview_rect(
-                    width=self.width(),
-                    height=self.height(),
-                    profile=self._profile,
-                )
-                max_width = max(1, label_rect.width() - label_object.geometry.x)
-                max_height = max(1, label_rect.height() - label_object.geometry.y)
+                label_width, label_height = label_size_points(self._profile)
+                max_width = max(1, label_width - label_object.geometry.x)
+                max_height = max(1, label_height - label_object.geometry.y)
                 updated_object = replace(label_object, text=editor.text())
                 width = (
                     natural_text_box_auto_width(updated_object, max_width=max_width)
@@ -742,6 +842,12 @@ class LabelCanvas(QWidget):
         painter.save()
         painter.setClipRect(label_rect)
         painter.translate(label_rect.topLeft())
+        scale = preview_scale(
+            width=self.width(),
+            height=self.height(),
+            profile=self._profile,
+        )
+        painter.scale(scale, scale)
         self._renderer.render(self._document, QtRenderContext(painter))
         painter.setPen(QPen(Qt.GlobalColor.blue, 1, Qt.PenStyle.DashLine))
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -775,8 +881,20 @@ def _new_text_box_size(document: LabelDocument) -> tuple[float, float]:
         font_size=defaults.font_size,
         bold=defaults.bold,
         italic=defaults.italic,
+        underline=defaults.underline,
+        wrap=defaults.wrap,
+        alignment=defaults.alignment,
+        text_color=defaults.text_color,
     )
     return measured_text_box_size(text_object)
+
+
+def _qt_text_alignment(alignment: str) -> Qt.AlignmentFlag:
+    if alignment == "center":
+        return Qt.AlignmentFlag.AlignHCenter
+    if alignment == "right":
+        return Qt.AlignmentFlag.AlignRight
+    return Qt.AlignmentFlag.AlignLeft
 
 
 def _drag_state_for_text_object(

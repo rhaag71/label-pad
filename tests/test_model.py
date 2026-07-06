@@ -16,6 +16,14 @@ def test_document_starts_with_empty_ordered_object_list() -> None:
 
     assert document.objects == []
     assert document.defaults == DocumentDefaults()
+    assert document.defaults.font_family == "Helvetica"
+    assert document.defaults.font_size == 14
+    assert document.defaults.bold is False
+    assert document.defaults.italic is False
+    assert document.defaults.underline is False
+    assert document.defaults.wrap is True
+    assert document.defaults.alignment == "left"
+    assert document.defaults.text_color == "black"
 
 
 def test_text_object_defaults_and_fields() -> None:
@@ -40,7 +48,10 @@ def test_text_object_defaults_and_fields() -> None:
     assert text_object.font_size == 14
     assert text_object.bold is True
     assert text_object.italic is True
+    assert text_object.underline is False
     assert text_object.wrap is True
+    assert text_object.alignment == "left"
+    assert text_object.text_color == "black"
     assert text_object.auto_size is True
 
 
@@ -60,7 +71,10 @@ def test_create_text_adds_default_text_object_and_returns_it() -> None:
     assert text_object.font_size == 14
     assert text_object.bold is False
     assert text_object.italic is False
+    assert text_object.underline is False
     assert text_object.wrap is True
+    assert text_object.alignment == "left"
+    assert text_object.text_color == "black"
     assert text_object.auto_size is True
 
 
@@ -87,6 +101,9 @@ def test_create_text_uses_document_defaults() -> None:
         font_size=12,
         bold=True,
         italic=True,
+        underline=True,
+        wrap=False,
+        alignment="center",
     )
     document = LabelDocument(
         profile_name="4 x 6 Shipping Label",
@@ -99,6 +116,9 @@ def test_create_text_uses_document_defaults() -> None:
     assert text_object.font_size == 12
     assert text_object.bold is True
     assert text_object.italic is True
+    assert text_object.underline is True
+    assert text_object.wrap is False
+    assert text_object.alignment == "center"
 
 
 def test_create_text_deselects_existing_objects_and_selects_new_text() -> None:
